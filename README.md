@@ -16,7 +16,7 @@ Access Framework — nothing is copied into the app.
 ## Build
 
 ```bash
-gradle :app:assembleDebug
+./gradlew :app:assembleDebug
 ```
 
 The APK lands at `app/build/outputs/apk/debug/app-debug.apk`.
