@@ -1,0 +1,15 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+captures/
+
+# Kotlin/Gradle session + daemon state
+.kotlin/
+
+# Build/signing artifacts
+*.hprof
+*.jks
+*.keystore
