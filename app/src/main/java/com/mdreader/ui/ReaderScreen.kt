@@ -2,6 +2,8 @@ package com.mdreader.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,27 +15,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,9 +37,20 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.mdreader.data.Chapter
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
@@ -59,7 +61,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
+@OptIn(FlowPreview::class)
 @Composable
 fun ReaderScreen(
     project: Project,
@@ -95,7 +97,11 @@ fun ReaderScreen(
             runCatching { ChapterSource.read(context, Uri.parse(chapter.uri)) }
         }
         outcome.fold(
-            onSuccess = { text -> blocks = MarkdownParser.parse(text, chapter.isMarkdown) },
+            onSuccess = { text ->
+                blocks = MarkdownParser
+                    .parse(text, chapter.isMarkdown)
+                    .withoutOpeningTitle(chapter.title)
+            },
             onFailure = {
                 blocks = emptyList()
                 loadError = "Couldn't open \"${chapter.name}\". The folder may have moved, " +
@@ -145,135 +151,91 @@ fun ReaderScreen(
         loading = true
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = project.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = if (chapters.isEmpty()) {
-                                "No chapters"
-                            } else {
-                                "Chapter ${index + 1} of ${chapters.size}"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { saveAndLeave() }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back to library",
-                        )
-                    }
-                },
-                actions = {
-                    TextButton(
-                        onClick = { showChapters = true },
-                        enabled = chapters.isNotEmpty(),
-                    ) {
-                        Text("Chapters")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-            )
-        },
-        bottomBar = {
-            if (chapters.isNotEmpty()) {
-                Surface(
-                    tonalElevation = 3.dp,
-                    color = MaterialTheme.colorScheme.surface,
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { goTo(index - 1) },
-                            enabled = index > 0,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = null,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Previous")
-                        }
-                        Button(
-                            onClick = { goTo(index + 1) },
-                            enabled = index < lastIndex,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp),
-                        ) {
-                            Text("Next")
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                            )
-                        }
-                    }
-                }
-            }
-        },
-    ) { padding ->
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding(),
+    ) {
+        ReaderTopBar(
+            bookTitle = project.name,
+            onBack = { saveAndLeave() },
+            onIndex = { showChapters = true },
+            indexEnabled = chapters.isNotEmpty(),
+        )
+        ChapterRail(
+            currentIndex = index,
+            chapterCount = chapters.size,
+        )
+
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+                .fillMaxWidth()
+                .weight(1f),
         ) {
             val message = loadError
+            val chapter = chapters.getOrNull(index)
             when {
-                message != null -> ReaderError(message)
-
-                loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-
-                chapters.isEmpty() -> ReaderError(
-                    "This project has no chapters left. Re-import the folder from the library.",
+                message != null -> ReaderMessage(
+                    label = "Error",
+                    title = "Couldn't open this chapter",
+                    body = message,
                 )
 
-                blocks.isEmpty() -> Text(
-                    text = "This chapter is empty.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(32.dp),
-                    textAlign = TextAlign.Center,
+                loading -> Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 1.5.dp,
+                    )
+                }
+
+                chapters.isEmpty() || chapter == null -> ReaderMessage(
+                    label = "Empty",
+                    title = "No chapters",
+                    body = "Re-import the folder from the library.",
+                )
+
+                blocks.isEmpty() -> ReaderMessage(
+                    label = "Empty",
+                    title = "This chapter is empty.",
+                    body = "Move on to the next one.",
                 )
 
                 else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        start = 24.dp,
-                        end = 24.dp,
-                        top = 8.dp,
-                        bottom = 40.dp,
+                        start = ScreenPad,
+                        end = ScreenPad,
+                        top = 34.dp,
+                        bottom = 32.dp,
                     ),
                 ) {
+                    item(key = "opening") {
+                        ChapterOpening(
+                            chapter = chapter,
+                            index = index,
+                            total = chapters.size,
+                        )
+                    }
                     items(blocks) { block ->
                         BlockView(block)
                     }
                 }
             }
+        }
+
+        if (chapters.isNotEmpty()) {
+            ReaderFooter(
+                index = index,
+                total = chapters.size,
+                onPrevious = { goTo(index - 1) },
+                onNext = { goTo(index + 1) },
+            )
         }
     }
 
@@ -291,25 +253,295 @@ fun ReaderScreen(
 }
 
 @Composable
-private fun ReaderError(message: String) {
+private fun ReaderTopBar(
+    bookTitle: String,
+    onBack: () -> Unit,
+    onIndex: () -> Unit,
+    indexEnabled: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clickable(onClick = onBack)
+                .semantics {
+                    contentDescription = "Back to library"
+                    role = Role.Button
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            QuietArrow(direction = ArrowDirection.Left)
+        }
+
+        Text(
+            text = bookTitle.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.weight(1f),
+        )
+
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clickable(enabled = indexEnabled, onClick = onIndex)
+                .semantics {
+                    contentDescription = "Open chapter index"
+                    role = Role.Button
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "INDEX",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (indexEnabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChapterRail(currentIndex: Int, chapterCount: Int) {
+    val fraction = if (chapterCount > 0) {
+        ((currentIndex + 1).toFloat() / chapterCount).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        if (fraction > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChapterOpening(
+    chapter: Chapter,
+    index: Int,
+    total: Int,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .width(18.dp)
+                    .height(1.dp)
+                    .background(scheme.primary),
+            )
+            Spacer(Modifier.width(9.dp))
+            Micro(
+                text = "Chapter ${(index + 1).toString().padStart(2, '0')}",
+                accent = true,
+            )
+        }
+
+        Spacer(Modifier.height(17.dp))
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(end = 26.dp)) {
+                Text(
+                    text = chapter.title,
+                    color = scheme.onSurface,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 33.sp,
+                    lineHeight = 40.sp,
+                    letterSpacing = (-0.7).sp,
+                )
+                Spacer(Modifier.height(12.dp))
+                Micro(
+                    text = "${(index + 1).toString().padStart(2, '0')} / " +
+                        total.toString().padStart(2, '0'),
+                    color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+            VerticalText(
+                text = "静寂",
+                modifier = Modifier.align(Alignment.TopEnd),
+                color = scheme.outline.copy(alpha = 0.9f),
+            )
+        }
+
+        Spacer(Modifier.height(26.dp))
+        Ornament()
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun Ornament() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Hairline(modifier = Modifier.weight(1f))
+        Text(
+            text = "間",
+            color = MaterialTheme.colorScheme.outline,
+            fontFamily = FontFamily.SansSerif,
+            fontSize = 8.sp,
+            letterSpacing = 2.4.sp,
+            modifier = Modifier.padding(horizontal = 10.dp),
+        )
+        Hairline(modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ReaderFooter(
+    index: Int,
+    total: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
+    ) {
+        Hairline()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = ScreenPad, end = ScreenPad, top = 15.dp, bottom = 30.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Pager(
+                direction = ArrowDirection.Left,
+                label = "Previous",
+                arrowFirst = true,
+                enabled = index > 0,
+                onClick = onPrevious,
+            )
+
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)) {
+                        append((index + 1).toString().padStart(2, '0'))
+                    }
+                    withStyle(SpanStyle(color = scheme.onSurfaceVariant)) {
+                        append(" / ")
+                        append(total.toString().padStart(2, '0'))
+                    }
+                },
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
+            )
+
+            Pager(
+                direction = ArrowDirection.Right,
+                label = "Next",
+                arrowFirst = false,
+                enabled = index < total - 1,
+                onClick = onNext,
+            )
+        }
+    }
+}
+
+@Composable
+private fun Pager(
+    direction: ArrowDirection,
+    label: String,
+    arrowFirst: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val color = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    }
+
+    Row(
+        modifier = Modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (arrowFirst) {
+            QuietArrow(direction = direction, color = color)
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(
+            text = label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.Medium,
+        )
+        if (!arrowFirst) {
+            Spacer(Modifier.width(8.dp))
+            QuietArrow(direction = direction, color = color)
+        }
+    }
+}
+
+@Composable
+private fun ReaderMessage(
+    label: String,
+    title: String,
+    body: String,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 32.dp, vertical = 48.dp),
+            .padding(horizontal = ScreenPad, vertical = 48.dp),
         verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Micro(text = label, accent = true)
+        Spacer(Modifier.height(14.dp))
         Text(
-            text = "Couldn't open this chapter",
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = message,
+            text = body,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 300.dp),
         )
     }
 }
+
+/** Drops a leading Markdown heading when it only repeats the chapter's filename title. */
+private fun List<Block>.withoutOpeningTitle(title: String): List<Block> {
+    val first = firstOrNull() as? Block.Heading ?: return this
+    if (first.level > 2) return this
+
+    val heading = normalizeHeading(first.text)
+    val expected = normalizeHeading(title)
+    val genericChapter = Regex("^chapter\\s+\\d+$").matches(heading)
+    return if ((expected.isNotEmpty() && heading == expected) || genericChapter) {
+        drop(1)
+    } else {
+        this
+    }
+}
+
+private fun normalizeHeading(value: String): String =
+    value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()

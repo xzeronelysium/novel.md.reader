@@ -9,7 +9,20 @@ data class Chapter(
     val title: String
         get() {
             val base = name.substringBeforeLast('.', name)
-            return base.ifBlank { name }
+            val cleaned = base
+                .replace('_', ' ')
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .ifBlank { name }
+            return if (cleaned == cleaned.lowercase()) {
+                cleaned.split(' ').joinToString(" ") { word ->
+                    word.replaceFirstChar { first ->
+                        if (first.isLowerCase()) first.titlecase() else first.toString()
+                    }
+                }
+            } else {
+                cleaned
+            }
         }
 
     val isMarkdown: Boolean

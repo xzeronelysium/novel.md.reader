@@ -2,7 +2,11 @@
 
 A small Android reader for novels that live as a folder of `.md` / `.txt`
 chapters. Pick the folder once, read with **Previous / Next**, jump around from
-the chapter list, and come back to exactly where you stopped.
+the chapter index, and come back to exactly where you stopped.
+
+The interface follows a Japanese–Swiss direction: warm paper and sumi ink, a
+strict hairline grid, one vermilion accent, generous negative space, and serif
+type for the prose. It follows the system light/dark setting.
 
 One folder = one novel. Chapters are read **in place** through Android's Storage
 Access Framework — nothing is copied into the app.
@@ -37,10 +41,11 @@ Launch **MD Reader** from the app drawer.
 1. Tap **Import folder** and pick the folder holding your chapters. Grant access
    when Android asks.
 2. The novel appears in the library; tap it to start reading.
-3. Use **Previous / Next** at the bottom, or **Chapters** to jump anywhere.
+3. Use **Previous / Next** at the bottom, or **Index** to jump anywhere. The
+   index has a search field that filters chapters by title or filename.
 4. Position is saved automatically; reopening the novel returns to the same
    chapter and scroll offset.
-5. Chapter files added later: open the project's **⋮ → Refresh chapters**.
+5. Chapter files added later: open the project's **⋯ → Refresh chapters**.
 
 Sorting is natural, so `chapter_2` comes before `chapter_10`. Only files directly
 inside the chosen folder are listed (no subfolders), and hidden files are skipped.
@@ -57,6 +62,7 @@ app/src/main/java/com/mdreader/
   data/Models.kt           Chapter / Project / Progress
   md/Markdown.kt           Markdown subset parser (pure Kotlin)
   ui/MDReaderApp.kt        library <-> reader routing
+  ui/Design.kt             shared hairlines, micro labels, import action
   ui/LibraryScreen.kt
   ui/ReaderScreen.kt
   ui/ChapterListSheet.kt
@@ -88,7 +94,8 @@ Then import `/sdcard/Documents/sample-novel` in the app.
 
 - Moving, renaming, or deleting the folder breaks the project until you import
   it again.
-- No font size / theme controls, bookmarks, or in-book search yet.
+- No font size / theme controls, bookmarks, or full-text search inside a
+  chapter yet. Chapter titles can be searched from the index.
 - Markdown covers headings, bold/italic/strikethrough, lists, quotes, rules,
   fenced code. Anything else renders as plain text.
 - Subfolders inside a novel folder are ignored.
