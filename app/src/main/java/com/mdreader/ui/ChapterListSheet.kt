@@ -23,6 +23,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,6 +73,7 @@ fun ChapterListSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RectangleShape,
         containerColor = scheme.surfaceContainer,
         scrimColor = Color.Black.copy(alpha = 0.32f),
@@ -151,6 +153,8 @@ fun ChapterListSheet(
                     Micro(
                         text = if (trimmedQuery.isEmpty()) {
                             "${chapters.size} chapters"
+                        } else if (filtered.size == 1) {
+                            "1 match"
                         } else {
                             "${filtered.size} matches"
                         },
