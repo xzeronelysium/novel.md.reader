@@ -190,7 +190,7 @@ private fun LibraryHeader(novelCount: Int) {
                 SealDot()
                 Spacer(Modifier.width(9.dp))
                 Text(
-                    text = "MD READER",
+                    text = "NOVEL.MD.READER",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
@@ -430,7 +430,7 @@ private fun RemoveDialog(
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    text = "\"${project.name}\" will be removed from MD Reader. " +
+                    text = "\"${project.name}\" will be removed from your library. " +
                         "The chapter files in the folder are not touched.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

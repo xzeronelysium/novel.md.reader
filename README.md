@@ -1,20 +1,21 @@
-# MD Reader
+# novel.md.reader
 
 A small Android reader for novels that live as a folder of `.md` / `.txt`
-chapters. Pick the folder once, read with **Previous / Next**, jump around from
-the chapter index, and come back to exactly where you stopped.
+chapters. You pick the folder once, read with Previous / Next, jump around from
+the chapter index, and come back to wherever you stopped.
 
-The interface follows a Japanese–Swiss direction: warm paper and sumi ink, a
-strict hairline grid, one vermilion accent, generous negative space, and serif
-type for the prose. It follows the system light/dark setting.
+The interface wants to get out of the way: warm paper and sumi ink, a hairline
+grid, a single vermilion accent, serif type for the prose. It follows the
+system light/dark setting.
 
-One folder = one novel. Chapters are read **in place** through Android's Storage
-Access Framework — nothing is copied into the app.
+One folder is one novel. Chapters are read in place through Android's Storage
+Access Framework, so nothing gets copied into the app and your files stay where
+they are.
 
 ## Requirements
 
 - Android 8.0 (API 26) or newer
-- JDK 17+ and Android SDK 36 to build (this machine has both)
+- JDK 17+ and Android SDK 36 to build
 - `adb` for installing on a phone
 
 ## Build
@@ -27,28 +28,29 @@ The APK lands at `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Install
 
-Enable **Developer options → USB debugging** on the phone, plug it in, then:
+Turn on Developer options and USB debugging on the phone, plug it in, then:
 
 ```bash
-adb devices                      # confirm the phone is listed as "device"
+adb devices                      # confirm the phone shows up as "device"
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Launch **MD Reader** from the app drawer.
+Launch **novel.md.reader** from the app drawer.
 
 ## Use
 
-1. Tap **Import folder** and pick the folder holding your chapters. Grant access
+1. Tap Import folder and pick the folder holding your chapters. Grant access
    when Android asks.
-2. The novel appears in the library; tap it to start reading.
-3. Use **Previous / Next** at the bottom, or **Index** to jump anywhere. The
-   index has a search field that filters chapters by title or filename.
-4. Position is saved automatically; reopening the novel returns to the same
-   chapter and scroll offset.
-5. Chapter files added later: open the project's **⋯ → Refresh chapters**.
+2. The novel shows up in the library. Tap it to read.
+3. Previous / Next sit at the bottom. Index opens the full chapter list, which
+   filters by title or filename and also carries an S / M / L text size switch.
+4. Position saves itself as you read. Reopening a novel puts you back on the
+   same chapter at the same scroll offset.
+5. Added chapters to the folder later? Use the project's ⋯ → Refresh chapters.
 
-Sorting is natural, so `chapter_2` comes before `chapter_10`. Only files directly
-inside the chosen folder are listed (no subfolders), and hidden files are skipped.
+Sorting is natural, so `chapter_2` comes before `chapter_10`. Only files
+directly inside the chosen folder are listed (no subfolders), and hidden files
+are skipped.
 
 ## Project layout
 
@@ -70,19 +72,20 @@ app/src/main/java/com/mdreader/
   ui/theme/Theme.kt
 ```
 
-State lives in `filesDir/library.json` (projects, chapter URIs, reading
-positions). Uninstalling the app deletes that file, so the library has to be
-imported again — the chapter files themselves are never modified.
+App data lives in `filesDir/library.json`: the projects, their chapter URIs,
+reading positions, and the text size choice. Uninstalling deletes that file, so
+you'd have to import again. The chapter files themselves are never touched.
 
 ## Tests
 
 ```bash
-gradle :app:testDebugUnitTest
+./gradlew :app:testDebugUnitTest
 ```
 
 Covers natural sorting and the Markdown parser (17 tests).
 
-`tools/sample-novel/` holds 12 mixed `.md`/`.txt` chapters for trying the app:
+`tools/sample-novel/` holds 12 mixed `.md`/`.txt` chapters if you want
+something to poke at:
 
 ```bash
 adb push tools/sample-novel /sdcard/Documents/sample-novel
@@ -90,12 +93,15 @@ adb push tools/sample-novel /sdcard/Documents/sample-novel
 
 Then import `/sdcard/Documents/sample-novel` in the app.
 
-## Known limits (v1)
+## Known limits
 
 - Moving, renaming, or deleting the folder breaks the project until you import
   it again.
-- No font size / theme controls, bookmarks, or full-text search inside a
-  chapter yet. Chapter titles can be searched from the index.
+- There's no bookmarking, no search inside a chapter, no theme beyond the
+  system light/dark setting. Text size is the S / M / L switch in the index.
 - Markdown covers headings, bold/italic/strikethrough, lists, quotes, rules,
-  fenced code. Anything else renders as plain text.
+  and fenced code. Anything else renders as plain text.
 - Subfolders inside a novel folder are ignored.
+
+No plans to grow past this. The app reads folders of chapters, and that's the
+whole list.

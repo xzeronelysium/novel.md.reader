@@ -1,4 +1,4 @@
-# MD Reader — v1 plan
+# novel.md.reader — v1 plan
 
 A minimal Android reader for novels stored as one folder of `.md` / `.txt` chapters.
 
@@ -15,7 +15,7 @@ A minimal Android reader for novels stored as one folder of `.md` / `.txt` chapt
 | Import mode | **Reference in place** via Storage Access Framework — no copying |
 | v1 scope | Prev/Next, chapter list, remembers position |
 | Distribution | Debug/release APK sideloaded with `adb` — no Play Store |
-| App name / id | `MD Reader` / `com.mdreader` (change if you prefer) |
+| App name / id | `novel.md.reader` / `com.mdreader` |
 
 ## How import works (the important part)
 
@@ -134,7 +134,7 @@ Font size control, themes, bookmarks, in-book search, EPUB/HTML, subfolders insi
 
 ## Resolved decisions
 
-1. App name / package id: `MD Reader` / `com.mdreader`.
+1. App name / package id: `novel.md.reader` / `com.mdreader`.
 2. Minimum Android version: 8.0 (API 26); the test phone runs Android 11.
 3. Novel folders are flat — subfolders are ignored by import.
 
