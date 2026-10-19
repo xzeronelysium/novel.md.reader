@@ -15,6 +15,7 @@ class LibraryStore(context: Context) {
     private val projects = mutableListOf<Project>()
     private val progressById = mutableMapOf<String, Progress>()
     private var loaded = false
+    private var textSizeLevel = 1
 
     @Synchronized
     fun load(): List<Project> {
@@ -57,6 +58,22 @@ class LibraryStore(context: Context) {
     fun progress(projectId: String): Progress? {
         ensureLoaded()
         return progressById[projectId]
+    }
+
+    /** Reader text size: 0 = small, 1 = medium (default), 2 = large. */
+    @Synchronized
+    fun textSizeLevel(): Int {
+        ensureLoaded()
+        return textSizeLevel
+    }
+
+    @Synchronized
+    fun setTextSizeLevel(level: Int) {
+        ensureLoaded()
+        val clamped = level.coerceIn(0, 2)
+        if (clamped == textSizeLevel) return
+        textSizeLevel = clamped
+        persist()
     }
 
     @Synchronized
@@ -107,6 +124,8 @@ class LibraryStore(context: Context) {
                     scrollOffset = value.optInt("scrollOffset", 0),
                 )
             }
+
+            textSizeLevel = root.optInt("textSize", 1).coerceIn(0, 2)
         }.onFailure {
             // A corrupt file should not brick the app; start with an empty library.
             projects.clear()
@@ -149,6 +168,7 @@ class LibraryStore(context: Context) {
             )
         }
         root.put("progress", progressObject)
+        root.put("textSize", textSizeLevel)
 
         val temp = File(file.parentFile, "${file.name}.tmp")
         temp.writeText(root.toString())

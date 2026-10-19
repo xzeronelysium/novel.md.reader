@@ -8,6 +8,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -33,10 +34,12 @@ fun MDReaderApp() {
     var projects by remember { mutableStateOf<List<Project>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var importing by remember { mutableStateOf(false) }
+    var textSizeLevel by remember { mutableIntStateOf(1) }
     var openProjectId by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         projects = withContext(Dispatchers.IO) { store.load() }
+        textSizeLevel = store.textSizeLevel()
         loading = false
     }
 
@@ -101,6 +104,11 @@ fun MDReaderApp() {
         ReaderScreen(
             project = openProject,
             initialProgress = store.progress(openProject.id),
+            textSizeLevel = textSizeLevel,
+            onTextSizeChange = { level ->
+                textSizeLevel = level
+                scope.launch(Dispatchers.IO) { store.setTextSizeLevel(level) }
+            },
             onBack = { openProjectId = null },
             onProgress = { progress ->
                 scope.launch(Dispatchers.IO) { store.setProgress(openProject.id, progress) }

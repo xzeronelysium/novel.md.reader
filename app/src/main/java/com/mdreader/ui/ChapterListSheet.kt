@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +51,8 @@ import com.mdreader.data.Project
 fun ChapterListSheet(
     project: Project,
     currentIndex: Int,
+    textSizeLevel: Int,
+    onTextSizeChange: (Int) -> Unit,
     onSelect: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -145,7 +148,20 @@ fun ChapterListSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = ScreenPad, end = ScreenPad, top = 12.dp, bottom = 30.dp),
+                        .padding(start = ScreenPad, end = ScreenPad, top = 10.dp, bottom = 26.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Micro(text = "Text size")
+                    Spacer(Modifier.weight(1f))
+                    TextSizeToggle(
+                        level = textSizeLevel,
+                        onChange = onTextSizeChange,
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = ScreenPad, end = ScreenPad, bottom = 30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Micro(text = if (trimmedQuery.isEmpty()) "Tap to jump" else "Filtered")
@@ -274,6 +290,29 @@ private fun ChapterRow(
         if (current) {
             Spacer(Modifier.width(10.dp))
             Micro(text = "Reading", accent = true)
+        }
+    }
+}
+
+/** S / M / L reader text size. Flat text buttons; the active level is vermilion. */
+@Composable
+private fun TextSizeToggle(
+    level: Int,
+    onChange: (Int) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        listOf("S", "M", "L").forEachIndexed { levelIndex, label ->
+            val selected = levelIndex == level.coerceIn(0, 2)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) scheme.primary else scheme.onSurfaceVariant,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                modifier = Modifier
+                    .clickable { onChange(levelIndex) }
+                    .padding(horizontal = 11.dp, vertical = 9.dp),
+            )
         }
     }
 }

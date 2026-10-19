@@ -34,9 +34,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -48,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mdreader.data.Chapter
@@ -66,6 +69,8 @@ import kotlinx.coroutines.withContext
 fun ReaderScreen(
     project: Project,
     initialProgress: Progress?,
+    textSizeLevel: Int,
+    onTextSizeChange: (Int) -> Unit,
     onBack: () -> Unit,
     onProgress: (Progress) -> Unit,
 ) {
@@ -205,25 +210,39 @@ fun ReaderScreen(
                     body = "Move on to the next one.",
                 )
 
-                else -> LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = ScreenPad,
-                        end = ScreenPad,
-                        top = 34.dp,
-                        bottom = 32.dp,
-                    ),
-                ) {
-                    item(key = "opening") {
-                        ChapterOpening(
-                            chapter = chapter,
-                            index = index,
-                            total = chapters.size,
-                        )
+                else -> {
+                    // S/M/L scales every sp value in the reading column, on top of
+                    // whatever the system font scale already is.
+                    val density = LocalDensity.current
+                    val scaled = when (textSizeLevel.coerceIn(0, 2)) {
+                        0 -> 0.88f
+                        1 -> 1f
+                        else -> 1.15f
                     }
-                    items(blocks) { block ->
-                        BlockView(block)
+                    CompositionLocalProvider(
+                        LocalDensity provides Density(density.density, density.fontScale * scaled),
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                start = ScreenPad,
+                                end = ScreenPad,
+                                top = 34.dp,
+                                bottom = 32.dp,
+                            ),
+                        ) {
+                            item(key = "opening") {
+                                ChapterOpening(
+                                    chapter = chapter,
+                                    index = index,
+                                    total = chapters.size,
+                                )
+                            }
+                            items(blocks) { block ->
+                                BlockView(block)
+                            }
+                        }
                     }
                 }
             }
@@ -243,6 +262,8 @@ fun ReaderScreen(
         ChapterListSheet(
             project = project,
             currentIndex = index,
+            textSizeLevel = textSizeLevel,
+            onTextSizeChange = onTextSizeChange,
             onSelect = { selected ->
                 showChapters = false
                 goTo(selected)

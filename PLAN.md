@@ -130,7 +130,7 @@ Each phase ends with something installable, so you can look at it on the phone a
 
 ## Deliberately not in v1
 
-Font size control, themes, bookmarks, in-book search, EPUB/HTML, subfolders inside a novel, cloud sync, Play Store release. All are additive later; none block the design.
+Font size control, themes, bookmarks, in-book search, EPUB/HTML, subfolders inside a novel, cloud sync, Play Store release. All are additive later; none block the design. *(An S/M/L reader text-size control was added post-v1; fine-grained size/line-height tuning still lives in `Theme.kt`.)*
 
 ## Resolved decisions
 
