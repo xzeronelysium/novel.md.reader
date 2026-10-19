@@ -201,22 +201,11 @@ private fun LibraryHeader(novelCount: Int) {
 
         Spacer(Modifier.height(30.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
-        ) {
-            Text(
-                text = "Library",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            VerticalText(
-                text = "書架",
-                modifier = Modifier.padding(top = 2.dp, end = 2.dp),
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.9f),
-            )
-        }
+        Text(
+            text = "Library",
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
 
         Spacer(Modifier.height(16.dp))
 

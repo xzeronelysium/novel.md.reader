@@ -23,10 +23,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 /** The one horizontal margin every screen shares. */
@@ -73,30 +71,6 @@ fun GridRule(modifier: Modifier = Modifier) {
         listOf(0.25f, 0.75f).forEach { fraction ->
             val x = size.width * fraction
             drawLine(color, Offset(x, 0f), Offset(x, 4.dp.toPx()), stroke)
-        }
-    }
-}
-
-/** Renders a short Japanese word top-to-bottom, as a margin mark. */
-@Composable
-fun VerticalText(
-    text: String,
-    modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        text.forEach { character ->
-            Text(
-                text = character.toString(),
-                color = color,
-                fontFamily = FontFamily.SansSerif,
-                fontWeight = FontWeight.Normal,
-                fontSize = 11.sp,
-                lineHeight = 17.sp,
-            )
         }
     }
 }

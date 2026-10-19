@@ -359,28 +359,21 @@ private fun ChapterOpening(
 
         Spacer(Modifier.height(17.dp))
 
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(end = 26.dp)) {
-                Text(
-                    text = chapter.title,
-                    color = scheme.onSurface,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Normal,
-                    fontSize = 33.sp,
-                    lineHeight = 40.sp,
-                    letterSpacing = (-0.7).sp,
-                )
-                Spacer(Modifier.height(12.dp))
-                Micro(
-                    text = "${(index + 1).toString().padStart(2, '0')} / " +
-                        total.toString().padStart(2, '0'),
-                    color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
-                )
-            }
-            VerticalText(
-                text = "静寂",
-                modifier = Modifier.align(Alignment.TopEnd),
-                color = scheme.outline.copy(alpha = 0.9f),
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = chapter.title,
+                color = scheme.onSurface,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Normal,
+                fontSize = 33.sp,
+                lineHeight = 40.sp,
+                letterSpacing = (-0.7).sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            Micro(
+                text = "${(index + 1).toString().padStart(2, '0')} / " +
+                    total.toString().padStart(2, '0'),
+                color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }
 
