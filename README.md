@@ -13,13 +13,14 @@ system light/dark setting.
 ## Download
 
 Grab the APK from the [latest release](https://github.com/xzeronelysium/novel.md.reader/releases/latest)
-and install it on your phone. Requires Android 8.0 or newer.
+and install it on your phone. Requires Android 8.0 or newer. The APK is a
+minified release build, under 1 MB.
 
 ```bash
-adb install -r novel.md.reader-v1.0.apk
+adb install -r novel.md.reader-v1.1.apk
 ```
 
 Or download it on the phone itself and open it, allowing installs from unknown
 sources when Android asks. If you'd rather build it, run
-`./gradlew :app:assembleDebug` and check `PLAN.md` for how the whole thing fits
-together.
+`./gradlew :app:assembleRelease` and check `PLAN.md` for how the whole thing
+fits together.

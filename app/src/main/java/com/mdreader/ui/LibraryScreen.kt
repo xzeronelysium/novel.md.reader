@@ -399,7 +399,7 @@ private fun LibraryFooter(onImport: () -> Unit) {
         ) {
             ImportAction(onClick = onImport)
             Micro(
-                text = "V1.0",
+                text = "V1.1",
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }

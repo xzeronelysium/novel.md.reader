@@ -14,15 +14,22 @@ android {
         applicationId = "com.mdreader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+        // AndroidX ships ~85 locales; keep only the ones the app could use.
+        resourceConfigurations += listOf("en", "ja")
     }
 
     buildTypes {
         debug {
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // Self-signed so the release variant installs without extra setup.
             signingConfig = signingConfigs.getByName("debug")
         }
