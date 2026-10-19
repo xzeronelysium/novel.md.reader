@@ -401,8 +401,8 @@ private fun Ornament() {
             text = "間",
             color = MaterialTheme.colorScheme.outline,
             fontFamily = FontFamily.SansSerif,
-            fontSize = 8.sp,
-            letterSpacing = 2.4.sp,
+            fontSize = 10.sp,
+            letterSpacing = 2.sp,
             modifier = Modifier.padding(horizontal = 10.dp),
         )
         Hairline(modifier = Modifier.weight(1f))

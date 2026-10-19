@@ -94,8 +94,8 @@ fun VerticalText(
                 color = color,
                 fontFamily = FontFamily.SansSerif,
                 fontWeight = FontWeight.Normal,
-                fontSize = 10.sp,
-                lineHeight = 15.sp,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
             )
         }
     }

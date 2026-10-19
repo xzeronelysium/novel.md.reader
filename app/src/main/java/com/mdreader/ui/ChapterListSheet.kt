@@ -265,7 +265,7 @@ private fun ChapterRow(
         )
         Text(
             text = title,
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             color = scheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
