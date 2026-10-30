@@ -23,6 +23,7 @@ object FreeWebNovelClient {
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     private const val TIMEOUT_MS = 15_000
     private const val MAX_BODY_CHARS = 4_000_000
+    private const val MAX_COVER_BYTES = 3_000_000
     private const val LIST_PACE_MS = 300L
     private val RATE_LIMIT_BACKOFF_MS = listOf(2_000L, 5_000L, 12_000L)
 
@@ -78,6 +79,37 @@ object FreeWebNovelClient {
     suspend fun loadChapter(path: String): List<Block> {
         require(FreeWebNovelParser.isChapterPath(path)) { "Not a chapter path: $path" }
         return FreeWebNovelParser.parseChapter(get(path))
+    }
+
+    /** Raw bytes of a cover image; only same-site cover URLs are fetched. */
+    suspend fun loadCover(url: String): ByteArray? {
+        if (!FreeWebNovelParser.isCoverUrl(url)) return null
+        return withContext(Dispatchers.IO) {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = TIMEOUT_MS
+                connection.readTimeout = TIMEOUT_MS
+                connection.instanceFollowRedirects = false
+                connection.setRequestProperty("User-Agent", USER_AGENT)
+                if (connection.responseCode !in 200..299) return@withContext null
+                if (connection.contentLengthLong > MAX_COVER_BYTES) return@withContext null
+                val out = java.io.ByteArrayOutputStream()
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        out.write(buffer, 0, read)
+                        if (out.size() > MAX_COVER_BYTES) return@withContext null
+                    }
+                }
+                out.toByteArray()
+            } catch (e: IOException) {
+                null
+            } finally {
+                connection.disconnect()
+            }
+        }
     }
 
     /** Retries a rate-limited request a few times with growing pauses, then gives up visibly. */

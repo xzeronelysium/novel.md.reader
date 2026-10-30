@@ -180,4 +180,19 @@ class FreeWebNovelParserTest {
         assertFalse(FreeWebNovelParser.isChapterPath("/novel/a/chapter-1?x=1"))
         assertFalse(FreeWebNovelParser.isChapterPath("https://evil.example/novel/a/chapter-1"))
     }
+
+    @Test
+    fun `cover comes from og image and only when hosted on the site`() {
+        val page = { img: String ->
+            "<html><head><meta property=\"og:image\" content=\"$img\"></head><body>" +
+                "<div class=\"m-desc\"><h1 class=\"tit\">T</h1></div></body></html>"
+        }
+        val good = "https://freewebnovel.com/files/article/image/1/1427/1427s.jpg"
+        assertEquals(good, FreeWebNovelParser.parseNovelDetails(page(good)).cover)
+        assertEquals(good, FreeWebNovelParser.parseNovelDetails(page("/files/article/image/1/1427/1427s.jpg")).cover)
+        assertEquals("", FreeWebNovelParser.parseNovelDetails(page("https://evil.example/files/a.jpg")).cover)
+        assertEquals("", FreeWebNovelParser.parseNovelDetails(page("/files/../etc/passwd")).cover)
+        assertTrue(FreeWebNovelParser.isCoverUrl(good))
+        assertFalse(FreeWebNovelParser.isCoverUrl("https://freewebnovel.com/novel/a"))
+    }
 }

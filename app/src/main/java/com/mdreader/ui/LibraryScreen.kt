@@ -2,7 +2,10 @@ package com.mdreader.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -490,6 +493,28 @@ private fun ContinueCard(
                 .border(1.dp, scheme.onSurface)
                 .combinedClickable(onClick = onOpen, onLongClick = { menuOpen = true }),
         ) {
+            // The cover as a ghost behind the text, washed toward the page colour on the text side.
+            val cover = rememberCover(project.coverUrl)
+            if (cover != null) {
+                Image(
+                    bitmap = cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    alpha = 0.28f,
+                    modifier = Modifier.matchParentSize(),
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.horizontalGradient(
+                                0f to scheme.background,
+                                0.25f to scheme.background,
+                                1f to scheme.background.copy(alpha = 0.35f),
+                            ),
+                        ),
+                )
+            }
             Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp)) {
                 Text(
                     text = project.name,

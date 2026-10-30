@@ -11,7 +11,8 @@ suspend fun refreshOnlineProject(project: Project, store: LibraryStore): Result<
     val path = requireNotNull(project.onlinePath) { "Not an online novel." }
     val novel = FreeWebNovelClient.loadDetails(path)
     val chapters = novel.chapters.toChapters()
-    val updated = project.copy(name = novel.details.title, chapters = chapters, totalChapters = chapters.size)
+    val updated = project.copy(name = novel.details.title, chapters = chapters, totalChapters = chapters.size,
+        coverUrl = novel.details.cover.ifEmpty { null } ?: project.coverUrl)
     store.addOrReplace(updated)
     store.progress(project.id)?.let { store.setProgress(project.id, it.remapTo(chapters)) }
     updated

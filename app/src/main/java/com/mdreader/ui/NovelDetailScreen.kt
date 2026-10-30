@@ -366,54 +366,59 @@ private fun Header(
         }
     }
 
-    Column {
-        TitleBlock(onBack = onBack, title = details.title) {
-            if (details.author.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Micro(text = details.author)
-            }
-        }
-
-        if (details.genres.isNotEmpty()) {
-            Spacer(Modifier.height(24.dp))
-            Row(
-                modifier = Modifier.padding(horizontal = ScreenPad),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                details.genres.take(4).forEach { genre ->
-                    Text(
-                        text = genre.uppercase(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurfaceVariant,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .border(1.dp, scheme.outline)
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                    )
+    val cover = rememberCover(details.cover.ifEmpty { project.coverUrl.orEmpty() })
+    Column(modifier = Modifier.coverGlow(cover)) {
+        // Poster ink behind the title and stats; it dissolves before the button.
+        Column(modifier = Modifier.coverBackdrop(cover, scheme.background)) {
+            TitleBlock(onBack = onBack, title = details.title) {
+                if (details.author.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Micro(text = details.author)
                 }
             }
-        }
 
-        Spacer(Modifier.height(20.dp))
-        Hairline(modifier = Modifier.padding(horizontal = ScreenPad))
-        Row(modifier = Modifier.padding(horizontal = ScreenPad).height(IntrinsicSize.Min)) {
-            Stat("Chapters", "%,d".format(total), modifier = Modifier.weight(1f))
-            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outlineVariant))
-            Stat(
-                "Status",
-                details.status.ifEmpty { "—" },
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
-            )
-            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outlineVariant))
-            val read = resumeIndex?.let { ((it + 1) * 100 / total.coerceAtLeast(1)).coerceIn(1, 100) }
-            Stat(
-                "Read",
-                read?.let { "$it%" } ?: "—",
-                accent = read != null,
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
-            )
+            if (details.genres.isNotEmpty()) {
+                Spacer(Modifier.height(24.dp))
+                Row(
+                    modifier = Modifier.padding(horizontal = ScreenPad),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    details.genres.take(4).forEach { genre ->
+                        Text(
+                            text = genre.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .border(1.dp, scheme.outline)
+                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Hairline(modifier = Modifier.padding(horizontal = ScreenPad))
+            Row(modifier = Modifier.padding(horizontal = ScreenPad).height(IntrinsicSize.Min)) {
+                Stat("Chapters", "%,d".format(total), modifier = Modifier.weight(1f))
+                Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outlineVariant))
+                Stat(
+                    "Status",
+                    details.status.ifEmpty { "—" },
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                )
+                Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outlineVariant))
+                val read = resumeIndex?.let { ((it + 1) * 100 / total.coerceAtLeast(1)).coerceIn(1, 100) }
+                Stat(
+                    "Read",
+                    read?.let { "$it%" } ?: "—",
+                    accent = read != null,
+                    modifier = Modifier.weight(1f).padding(start = 12.dp),
+                )
+            }
+            Hairline(modifier = Modifier.padding(horizontal = ScreenPad))
+            Spacer(Modifier.height(if (cover != null) 50.dp else 0.dp))
         }
-        Hairline(modifier = Modifier.padding(horizontal = ScreenPad))
 
         Spacer(Modifier.height(20.dp))
         Box(

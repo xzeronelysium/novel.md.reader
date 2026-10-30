@@ -105,7 +105,14 @@ fun MDReaderApp() {
                         NovelDetails(saved.name, "", "", emptyList(), "", 1)
                     }
                     val resume = store.progress(saved.id)?.remapTo(saved.chapters)?.chapterIndex
-                    detail = NovelDetailState(details = info, project = saved, inLibrary = true, resumeIndex = resume)
+                    // Novels saved before covers existed pick theirs up here.
+                    val shown = if (saved.coverUrl == null && info.cover.isNotEmpty()) {
+                        saved.copy(coverUrl = info.cover).also { withContext(Dispatchers.IO) { store.addOrReplace(it) } }
+                    } else {
+                        saved
+                    }
+                    if (shown !== saved) projects = withContext(Dispatchers.IO) { store.load() }
+                    detail = NovelDetailState(details = info, project = shown, inLibrary = true, resumeIndex = resume)
                     return@launch
                 }
                 var loaded = 0
@@ -131,6 +138,7 @@ fun MDReaderApp() {
                     importedAt = System.currentTimeMillis(),
                     onlinePath = path,
                     totalChapters = chapters.size,
+                    coverUrl = novel.details.cover.ifEmpty { null },
                 )
                 detail = NovelDetailState(details = novel.details, project = project, inLibrary = false)
             } catch (e: CancellationException) {
@@ -151,7 +159,12 @@ fun MDReaderApp() {
             try {
                 val novel = FreeWebNovelClient.loadDetails(path)
                 val chapters = novel.chapters.toChapters()
-                val updated = current.copy(name = novel.details.title, chapters = chapters, totalChapters = chapters.size)
+                val updated = current.copy(
+                    name = novel.details.title,
+                    chapters = chapters,
+                    totalChapters = chapters.size,
+                    coverUrl = novel.details.cover.ifEmpty { null } ?: current.coverUrl,
+                )
                 var resume = detail.resumeIndex
                 if (detail.inLibrary) {
                     withContext(Dispatchers.IO) {

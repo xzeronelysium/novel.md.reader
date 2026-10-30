@@ -35,6 +35,8 @@ data class NovelDetails(
     val genres: List<String>,
     val synopsis: String,
     val totalPages: Int,
+    /** Absolute same-site cover image URL, or empty when the page has none. */
+    val cover: String = "",
 )
 
 /**
@@ -106,8 +108,19 @@ object FreeWebNovelParser {
             genres = info?.select("a[href^=/genre/]")?.map { it.text().trim() }.orEmpty(),
             synopsis = synopsis,
             totalPages = options.coerceAtLeast(1),
+            cover = coverUrl(doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()),
         )
     }
+
+    private val coverPath = Regex("^/files/[A-Za-z0-9._/~-]+\\.(jpg|jpeg|png|webp)$", RegexOption.IGNORE_CASE)
+
+    /** Keeps only a cover image hosted on the site itself; anything else is dropped. */
+    fun coverUrl(raw: String): String {
+        val path = sitePath(raw.trim()) ?: return ""
+        return if (coverPath.matches(path) && ".." !in path) ORIGIN + path else ""
+    }
+
+    fun isCoverUrl(url: String) = url.startsWith("$ORIGIN/") && coverUrl(url) == url
 
     /** Parses the `?ajax=chapters` JSON response, validating its own bookkeeping. */
     fun parseChapterPage(json: String): ChapterPage {

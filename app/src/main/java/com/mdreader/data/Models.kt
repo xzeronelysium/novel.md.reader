@@ -45,6 +45,8 @@ data class Project(
     val totalChapters: Int? = null,
     /** Chapter list shown newest first; remembered per novel. */
     val newestFirst: Boolean = false,
+    /** Cover image URL of an online novel, if the site has one. */
+    val coverUrl: String? = null,
 ) {
     val isOnline: Boolean get() = onlinePath != null
 }
