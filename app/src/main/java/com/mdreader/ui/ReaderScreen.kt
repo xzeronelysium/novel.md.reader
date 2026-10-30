@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,9 @@ import com.mdreader.data.Chapter
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
+import com.mdreader.data.online.FreeWebNovelClient
+import com.mdreader.data.online.OnlineException
+import com.mdreader.data.remapTo
 import com.mdreader.md.Block
 import com.mdreader.md.MarkdownParser
 import kotlinx.coroutines.Dispatchers
@@ -77,18 +81,42 @@ fun ReaderScreen(
     val context = LocalContext.current
     val chapters = project.chapters
     val lastIndex = chapters.lastIndex
+    // An online list may be only partly loaded; show the site's real count.
+    val total = project.totalChapters?.takeIf { it > chapters.size } ?: chapters.size
+    // Match the saved position to its chapter by identity: an online list may have shifted.
+    val startProgress = remember(project.id) { initialProgress?.remapTo(chapters) }
 
     var index by rememberSaveable(project.id) {
-        mutableIntStateOf((initialProgress?.chapterIndex ?: 0).coerceIn(0, lastIndex.coerceAtLeast(0)))
+        mutableIntStateOf((startProgress?.chapterIndex ?: 0).coerceIn(0, lastIndex.coerceAtLeast(0)))
     }
     var blocks by remember(project.id) { mutableStateOf<List<Block>>(emptyList()) }
     var loading by remember(project.id) { mutableStateOf(true) }
     var loadError by remember(project.id) { mutableStateOf<String?>(null) }
     var showChapters by remember { mutableStateOf(false) }
-    var pendingRestore by remember(project.id) { mutableStateOf(initialProgress) }
+    var pendingRestore by remember(project.id) { mutableStateOf(startProgress) }
+    var attempt by remember(project.id) { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
+    val chapterPercent by remember(listState) {
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            val first = layout.visibleItemsInfo.firstOrNull()
+            val last = layout.visibleItemsInfo.lastOrNull()
+            if (first == null || last == null || layout.totalItemsCount == 0) {
+                null
+            } else {
+                chapterScrollPercent(
+                    firstIndex = first.index,
+                    firstOffset = first.offset,
+                    firstSize = first.size,
+                    totalItems = layout.totalItemsCount,
+                    atEnd = last.index == layout.totalItemsCount - 1 &&
+                        last.offset + last.size <= layout.viewportEndOffset,
+                )
+            }
+        }
+    }
 
-    LaunchedEffect(project.id, index) {
+    LaunchedEffect(project.id, index, attempt) {
         loading = true
         loadError = null
         val chapter = chapters.getOrNull(index)
@@ -98,19 +126,31 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
 
-        val outcome = withContext(Dispatchers.IO) {
-            runCatching { ChapterSource.read(context, Uri.parse(chapter.uri)) }
+        val outcome = if (chapter.remote) {
+            runCatching { FreeWebNovelClient.loadChapter(chapter.uri) }
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = ChapterSource.read(context, Uri.parse(chapter.uri))
+                    MarkdownParser
+                        .parse(text, chapter.isMarkdown)
+                        .withoutOpeningTitle(chapter.title)
+                }
+            }
         }
         outcome.fold(
-            onSuccess = { text ->
-                blocks = MarkdownParser
-                    .parse(text, chapter.isMarkdown)
-                    .withoutOpeningTitle(chapter.title)
-            },
+            onSuccess = { blocks = it },
             onFailure = {
                 blocks = emptyList()
-                loadError = "Couldn't open \"${chapter.name}\". The folder may have moved, " +
-                    "been renamed, or lost its permission."
+                loadError = if (chapter.remote) {
+                    (it as? OnlineException)?.message ?: run {
+                        android.util.Log.e("MDReader", "chapter load failed: ${chapter.uri}", it)
+                        "Couldn't load this chapter. (${it.javaClass.simpleName}: ${it.message})"
+                    }
+                } else {
+                    "Couldn't open \"${chapter.name}\". The folder may have moved, " +
+                        "been renamed, or lost its permission."
+                }
             },
         )
         loading = false
@@ -136,12 +176,19 @@ fun ReaderScreen(
             .debounce(500)
             .collect { (scrollIndex, scrollOffset) ->
                 // Ignore positions from the previous chapter while the new one loads.
-                if (!loading) onProgress(Progress(index, scrollIndex, scrollOffset))
+                if (!loading) onProgress(Progress(index, scrollIndex, scrollOffset, chapters.getOrNull(index)?.uri))
             }
     }
 
     fun saveAndLeave() {
-        onProgress(Progress(index, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset))
+        onProgress(
+            Progress(
+                index,
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                chapters.getOrNull(index)?.uri,
+            )
+        )
         onBack()
     }
 
@@ -170,7 +217,7 @@ fun ReaderScreen(
         )
         ChapterRail(
             currentIndex = index,
-            chapterCount = chapters.size,
+            chapterCount = total,
         )
 
         Box(
@@ -185,6 +232,8 @@ fun ReaderScreen(
                     label = "Error",
                     title = "Couldn't open this chapter",
                     body = message,
+                    actionLabel = if (chapter?.remote == true) "Try again" else null,
+                    onAction = { attempt++ },
                 )
 
                 loading -> Box(
@@ -236,7 +285,7 @@ fun ReaderScreen(
                                 ChapterOpening(
                                     chapter = chapter,
                                     index = index,
-                                    total = chapters.size,
+                                    total = total,
                                 )
                             }
                             items(blocks) { block ->
@@ -251,7 +300,8 @@ fun ReaderScreen(
         if (chapters.isNotEmpty()) {
             ReaderFooter(
                 index = index,
-                total = chapters.size,
+                total = total,
+                chapterPercent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent else null,
                 onPrevious = { goTo(index - 1) },
                 onNext = { goTo(index + 1) },
             )
@@ -427,6 +477,7 @@ private fun Ornament() {
 private fun ReaderFooter(
     index: Int,
     total: Int,
+    chapterPercent: Int?,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -441,37 +492,55 @@ private fun ReaderFooter(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = ScreenPad, end = ScreenPad, top = 15.dp, bottom = 30.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Pager(
-                direction = ArrowDirection.Left,
-                label = "Previous",
-                arrowFirst = true,
-                enabled = index > 0,
-                onClick = onPrevious,
-            )
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                Pager(
+                    direction = ArrowDirection.Left,
+                    label = "Previous",
+                    arrowFirst = true,
+                    enabled = index > 0,
+                    onClick = onPrevious,
+                )
+            }
 
-            Text(
-                text = buildAnnotatedString {
-                    withStyle(SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)) {
-                        append((index + 1).toString().padStart(2, '0'))
-                    }
-                    withStyle(SpanStyle(color = scheme.onSurfaceVariant)) {
-                        append(" / ")
-                        append(total.toString().padStart(2, '0'))
-                    }
-                },
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
-            )
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)) {
+                            append((index + 1).toString().padStart(2, '0'))
+                        }
+                        withStyle(SpanStyle(color = scheme.onSurfaceVariant)) {
+                            append(" / ")
+                            append(total.toString().padStart(2, '0'))
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
+                )
+                if (chapterPercent != null) {
+                    Text(
+                        text = "$chapterPercent%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.semantics {
+                            contentDescription = "$chapterPercent percent of chapter"
+                        },
+                    )
+                }
+            }
 
-            Pager(
-                direction = ArrowDirection.Right,
-                label = "Next",
-                arrowFirst = false,
-                enabled = index < total - 1,
-                onClick = onNext,
-            )
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                Pager(
+                    direction = ArrowDirection.Right,
+                    label = "Next",
+                    arrowFirst = false,
+                    enabled = index < total - 1,
+                    onClick = onNext,
+                )
+            }
         }
     }
 }
@@ -518,6 +587,8 @@ private fun ReaderMessage(
     label: String,
     title: String,
     body: String,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -539,6 +610,17 @@ private fun ReaderMessage(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 300.dp),
         )
+        if (actionLabel != null) {
+            Spacer(Modifier.height(20.dp))
+            Text(
+                text = actionLabel.uppercase(),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable(onClick = onAction)
+                    .padding(vertical = 8.dp),
+            )
+        }
     }
 }
 

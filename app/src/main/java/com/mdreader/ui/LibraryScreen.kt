@@ -3,6 +3,7 @@ package com.mdreader.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,10 +39,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.platform.LocalFocusManager
+import com.mdreader.data.online.NovelHit
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,11 +64,13 @@ fun LibraryScreen(
     importing: Boolean,
     snackbarHostState: SnackbarHostState,
     onImport: () -> Unit,
+    onOpenHit: (NovelHit) -> Unit,
     onOpen: (Project) -> Unit,
     onRefresh: (Project) -> Unit,
     onRemove: (Project) -> Unit,
 ) {
     var pendingRemoval by remember { mutableStateOf<Project?>(null) }
+    var searchActive by rememberSaveable { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
 
     Box(
@@ -88,13 +96,6 @@ fun LibraryScreen(
             LibraryHeader(novelCount = projects.size)
 
             Spacer(Modifier.height(26.dp))
-            GridRule(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = ScreenPad),
-            )
-
-            ListHead()
 
             when {
                 loading -> Box(
@@ -116,41 +117,83 @@ fun LibraryScreen(
                         .weight(1f),
                 )
 
-                else -> LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentPadding = PaddingValues(horizontal = ScreenPad),
-                ) {
-                    itemsIndexed(projects, key = { _, project -> project.id }) { index, project ->
-                        Column {
-                            ProjectRow(
-                                index = index,
-                                project = project,
-                                progress = progressOf(project.id),
-                                onOpen = { onOpen(project) },
-                                onRefresh = { onRefresh(project) },
-                                onRemove = { pendingRemoval = project },
-                            )
-                            if (index < projects.lastIndex) Hairline()
+                else -> {
+                    // The novel read most recently leads; the rest keep the shelf order.
+                    val lead = projects
+                        .mapNotNull { p -> progressOf(p.id)?.let { p to it } }
+                        .maxByOrNull { it.second.updatedAt }
+                    val others = projects.filter { it.id != lead?.first?.id }
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentPadding = PaddingValues(start = ScreenPad, end = ScreenPad, bottom = 96.dp),
+                    ) {
+                        if (lead != null) {
+                            item(key = "continue") {
+                                ContinueCard(
+                                    project = lead.first,
+                                    progress = lead.second,
+                                    onOpen = { onOpen(lead.first) },
+                                    onRefresh = { onRefresh(lead.first) },
+                                    onRemove = { pendingRemoval = lead.first },
+                                )
+                            }
                         }
-                    }
-                    item {
-                        QuietNote(
-                            modifier = Modifier.padding(top = 26.dp),
-                        )
+                        if (others.isNotEmpty()) {
+                            item(key = "label") {
+                                Micro(
+                                    text = if (lead != null) "Library · ${others.size}" else "Library",
+                                    modifier = Modifier.padding(top = 28.dp, bottom = 4.dp),
+                                )
+                            }
+                        }
+                        itemsIndexed(others, key = { _, project -> project.id }) { index, project ->
+                            Column {
+                                ProjectRow(
+                                    index = index,
+                                    project = project,
+                                    progress = progressOf(project.id),
+                                    onOpen = { onOpen(project) },
+                                    onRefresh = { onRefresh(project) },
+                                    onRemove = { pendingRemoval = project },
+                                )
+                                if (index < others.lastIndex) Hairline()
+                            }
+                        }
                     }
                 }
             }
 
-            LibraryFooter(onImport = onImport)
         }
+
+        if (searchActive) {
+            // Dim the shelf while searching; tapping it drops focus (the dock closes itself).
+            val focusManager = LocalFocusManager.current
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(scheme.scrim.copy(alpha = 0.42f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { focusManager.clearFocus() },
+            )
+        }
+        // The search bar is the library's footer: always there, no button to open it.
+        AddNovelDock(
+            active = searchActive,
+            onActiveChange = { searchActive = it },
+            onOpenHit = onOpenHit,
+            onImportFolder = onImport,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
 
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 16.dp, vertical = 92.dp),
+                .padding(start = 16.dp, end = 16.dp, bottom = 120.dp),
         ) { data ->
             Snackbar(
                 snackbarData = data,
@@ -207,28 +250,6 @@ private fun LibraryHeader(novelCount: Int) {
             color = MaterialTheme.colorScheme.onSurface,
         )
 
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            text = "A quiet shelf for novels kept as folders of chapters.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.widthIn(max = 250.dp),
-        )
-    }
-}
-
-@Composable
-private fun ListHead() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = ScreenPad, end = ScreenPad, top = 14.dp, bottom = 9.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Micro(text = "Collection")
-        Micro(text = "Last read")
     }
 }
 
@@ -284,62 +305,26 @@ private fun ProjectRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(7.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Micro(text = "$chapterCount chapters")
-                    Spacer(Modifier.width(7.dp))
-                    MetaDot()
-                    Spacer(Modifier.width(7.dp))
-                    Micro(
-                        text = if (position != null && percent != null) {
+                Micro(
+                    text = listOfNotNull(
+                        "Online".takeIf { project.isOnline },
+                        if (position != null && percent != null) {
                             "Ch. ${position.toString().padStart(2, '0')} · $percent%"
                         } else {
                             "Not started"
                         },
-                        accent = position != null,
-                    )
-                }
+                    ).joinToString(" \u00b7 "),
+                    accent = position != null,
+                )
             }
 
-            Box {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clickable { menuOpen = true },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "⋯",
-                        color = scheme.onSurfaceVariant,
-                        fontSize = 16.sp,
-                        lineHeight = 16.sp,
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { menuOpen = false },
-                    shape = RectangleShape,
-                    containerColor = scheme.surfaceContainer,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
-                    border = BorderStroke(1.dp, scheme.outlineVariant),
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Refresh chapters", style = MaterialTheme.typography.bodyMedium) },
-                        onClick = {
-                            menuOpen = false
-                            onRefresh()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Remove from library", style = MaterialTheme.typography.bodyMedium) },
-                        onClick = {
-                            menuOpen = false
-                            onRemove()
-                        },
-                    )
-                }
-            }
+            ProjectMenu(
+                project = project,
+                menuOpen = menuOpen,
+                onMenuOpenChange = { menuOpen = it },
+                onRefresh = onRefresh,
+                onRemove = onRemove,
+            )
         }
 
         if (position != null) {
@@ -356,16 +341,6 @@ private fun ProjectRow(
 }
 
 @Composable
-private fun QuietNote(modifier: Modifier = Modifier) {
-    Text(
-        text = "Chapters stay in the folder you chose. Nothing is copied or changed.",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-        modifier = modifier.widthIn(max = 238.dp),
-    )
-}
-
-@Composable
 private fun EmptyLibrary(modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(horizontal = ScreenPad)) {
         Spacer(Modifier.height(32.dp))
@@ -376,33 +351,12 @@ private fun EmptyLibrary(modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "Import the folder that holds your chapters. .md and .txt files " +
-                "open in natural order.",
+            text = "Search for a novel below, or tap DIR to import a folder of chapters " +
+                "(.md and .txt open in natural order).",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 280.dp),
         )
-    }
-}
-
-@Composable
-private fun LibraryFooter(onImport: () -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Hairline()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(start = ScreenPad, end = ScreenPad, top = 16.dp, bottom = 30.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ImportAction(onClick = onImport)
-            Micro(
-                text = "V1.1",
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            )
-        }
     }
 }
 
@@ -431,7 +385,11 @@ private fun RemoveDialog(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     text = "\"${project.name}\" will be removed from your library. " +
-                        "The chapter files in the folder are not touched.",
+                        if (project.isOnline) {
+                            "Your reading progress for it is forgotten."
+                        } else {
+                            "The chapter files in the folder are not touched."
+                        },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -459,6 +417,119 @@ private fun RemoveDialog(
                     )
                 }
             }
+        }
+    }
+}
+
+/** The long-press menu shared by the shelf rows and the Continue card; there is no visible button. */
+@Composable
+private fun ProjectMenu(
+    project: Project,
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Box(modifier = modifier) {
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { onMenuOpenChange(false) },
+            shape = RectangleShape,
+            containerColor = scheme.surfaceContainer,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            border = BorderStroke(1.dp, scheme.outlineVariant),
+        ) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (project.isOnline) "Check for new chapters" else "Refresh chapters",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                onClick = {
+                    onMenuOpenChange(false)
+                    onRefresh()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Remove from library", style = MaterialTheme.typography.bodyMedium) },
+                onClick = {
+                    onMenuOpenChange(false)
+                    onRemove()
+                },
+            )
+        }
+    }
+}
+
+/** The novel you were last in, big, with how far along you are. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ContinueCard(
+    project: Project,
+    progress: Progress,
+    onOpen: () -> Unit,
+    onRefresh: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
+    val total = project.totalChapters ?: project.chapters.size
+    val position = (progress.chapterIndex + 1).coerceIn(1, total.coerceAtLeast(1))
+    val fraction = (position.toFloat() / total.coerceAtLeast(1)).coerceIn(0f, 1f)
+    val percent = (fraction * 100).toInt().coerceIn(1, 100)
+
+    Column {
+        Micro(text = "Continue reading", accent = true, modifier = Modifier.padding(bottom = 12.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, scheme.onSurface)
+                .combinedClickable(onClick = onOpen, onLongClick = { menuOpen = true }),
+        ) {
+            Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp)) {
+                Text(
+                    text = project.name,
+                    color = scheme.onSurface,
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 24.sp,
+                    lineHeight = 30.sp,
+                    letterSpacing = (-0.3).sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Micro(text = "Ch. $position of ${"%,d".format(total)} \u00b7 ")
+                    Micro(text = "$percent%", accent = true)
+                }
+                Spacer(Modifier.height(14.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(scheme.outlineVariant),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(fraction)
+                            .height(2.dp)
+                            .background(scheme.primary),
+                    )
+                }
+            }
+            ProjectMenu(
+                project = project,
+                menuOpen = menuOpen,
+                onMenuOpenChange = { menuOpen = it },
+                onRefresh = onRefresh,
+                onRemove = onRemove,
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
         }
     }
 }

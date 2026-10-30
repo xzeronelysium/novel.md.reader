@@ -80,6 +80,7 @@ fun GridRule(modifier: Modifier = Modifier) {
 fun ImportAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    label: String = "IMPORT FOLDER",
 ) {
     Row(
         modifier = modifier
@@ -97,7 +98,7 @@ fun ImportAction(
         }
         Spacer(Modifier.width(11.dp))
         Text(
-            text = "IMPORT FOLDER",
+            text = label,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.SemiBold,

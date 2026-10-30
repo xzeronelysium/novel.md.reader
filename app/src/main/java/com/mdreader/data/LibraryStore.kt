@@ -34,7 +34,10 @@ class LibraryStore(context: Context) {
     fun addOrReplace(project: Project) {
         ensureLoaded()
         val index = projects.indexOfFirst {
-            it.id == project.id || it.treeUri == project.treeUri
+            it.id == project.id || when (project.onlinePath) {
+                null -> it.onlinePath == null && it.treeUri == project.treeUri
+                else -> it.onlinePath == project.onlinePath
+            }
         }
         if (index >= 0) {
             // Keep the original id so saved progress still points at this project.
@@ -79,8 +82,9 @@ class LibraryStore(context: Context) {
     @Synchronized
     fun setProgress(projectId: String, progress: Progress) {
         ensureLoaded()
-        if (progressById[projectId] == progress) return
-        progressById[projectId] = progress
+        val existing = progressById[projectId]
+        if (existing != null && existing.copy(updatedAt = 0) == progress.copy(updatedAt = 0)) return
+        progressById[projectId] = progress.copy(updatedAt = System.currentTimeMillis())
         persist()
     }
 
@@ -93,26 +97,8 @@ class LibraryStore(context: Context) {
             val root = JSONObject(file.readText())
             val projectArray = root.optJSONArray("projects") ?: JSONArray()
             for (i in 0 until projectArray.length()) {
-                val item = projectArray.getJSONObject(i)
-                val chaptersArray = item.optJSONArray("chapters") ?: JSONArray()
-                val chapters = buildList {
-                    for (c in 0 until chaptersArray.length()) {
-                        val chapter = chaptersArray.getJSONObject(c)
-                        add(
-                            Chapter(
-                                name = chapter.getString("name"),
-                                uri = chapter.getString("uri"),
-                            )
-                        )
-                    }
-                }
-                projects += Project(
-                    id = item.getString("id"),
-                    name = item.optString("name", "Untitled"),
-                    treeUri = item.getString("treeUri"),
-                    chapters = chapters,
-                    importedAt = item.optLong("importedAt", 0L),
-                )
+                // One bad entry must not wipe out the rest of the library.
+                runCatching { projects += readProject(projectArray.getJSONObject(i)) }
             }
 
             val progressObject = root.optJSONObject("progress") ?: JSONObject()
@@ -122,6 +108,8 @@ class LibraryStore(context: Context) {
                     chapterIndex = value.optInt("chapterIndex", 0),
                     scrollIndex = value.optInt("scrollIndex", 0),
                     scrollOffset = value.optInt("scrollOffset", 0),
+                    chapterKey = value.optString("chapterKey").ifEmpty { null },
+                    updatedAt = value.optLong("updatedAt", 0L),
                 )
             }
 
@@ -131,6 +119,32 @@ class LibraryStore(context: Context) {
             projects.clear()
             progressById.clear()
         }
+    }
+
+    private fun readProject(item: JSONObject): Project {
+        val chaptersArray = item.optJSONArray("chapters") ?: JSONArray()
+        val chapters = buildList {
+            for (c in 0 until chaptersArray.length()) {
+                val chapter = chaptersArray.getJSONObject(c)
+                add(
+                    Chapter(
+                        name = chapter.getString("name"),
+                        uri = chapter.getString("uri"),
+                        remote = chapter.optBoolean("remote", false),
+                    )
+                )
+            }
+        }
+        return Project(
+            id = item.getString("id"),
+            name = item.optString("name", "Untitled"),
+            treeUri = item.optString("treeUri"),
+            chapters = chapters,
+            importedAt = item.optLong("importedAt", 0L),
+            onlinePath = item.optString("onlinePath").ifEmpty { null },
+            totalChapters = if (item.has("totalChapters")) item.optInt("totalChapters") else null,
+            newestFirst = item.optBoolean("newestFirst", false),
+        )
     }
 
     private fun persist() {
@@ -144,6 +158,7 @@ class LibraryStore(context: Context) {
                     JSONObject()
                         .put("name", chapter.name)
                         .put("uri", chapter.uri)
+                        .apply { if (chapter.remote) put("remote", true) }
                 )
             }
             projectArray.put(
@@ -152,6 +167,9 @@ class LibraryStore(context: Context) {
                     .put("name", project.name)
                     .put("treeUri", project.treeUri)
                     .put("importedAt", project.importedAt)
+                    .apply { project.onlinePath?.let { put("onlinePath", it) } }
+                    .apply { project.totalChapters?.let { put("totalChapters", it) } }
+                    .apply { if (project.newestFirst) put("newestFirst", true) }
                     .put("chapters", chaptersArray)
             )
         }
@@ -165,6 +183,8 @@ class LibraryStore(context: Context) {
                     .put("chapterIndex", progress.chapterIndex)
                     .put("scrollIndex", progress.scrollIndex)
                     .put("scrollOffset", progress.scrollOffset)
+                    .apply { progress.chapterKey?.let { put("chapterKey", it) } }
+                    .put("updatedAt", progress.updatedAt)
             )
         }
         root.put("progress", progressObject)
