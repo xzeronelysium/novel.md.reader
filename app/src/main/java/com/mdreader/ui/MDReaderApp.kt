@@ -21,6 +21,7 @@ import com.mdreader.data.LibraryStore
 import com.mdreader.data.Project
 import com.mdreader.data.Progress
 import com.mdreader.data.remapTo
+import com.mdreader.data.withChapters
 import com.mdreader.data.online.FreeWebNovelClient
 import com.mdreader.data.online.NovelDetails
 import com.mdreader.data.online.OnlineException
@@ -29,6 +30,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.util.UUID
 import com.mdreader.data.importFolder
+import com.mdreader.data.checkOnlineProject
 import com.mdreader.data.refreshOnlineProject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,6 +87,39 @@ fun MDReaderApp() {
         }
     }
 
+    var check by remember { mutableStateOf(LibraryCheck()) }
+
+    /** Pull-to-check on the shelf: every online novel in turn, so the order and "+N" update live. */
+    fun checkAll() {
+        if (check.refreshing) return
+        val targets = projects.filter { it.isOnline }
+        if (targets.isEmpty()) return
+        check = LibraryCheck(refreshing = true, total = targets.size)
+        scope.launch {
+            var added = 0
+            var failed = 0
+            targets.forEachIndexed { index, target ->
+                checkOnlineProject(target, store).fold(
+                    onSuccess = { added += (it.chapters.size - target.chapters.size).coerceAtLeast(0) },
+                    onFailure = { failed++ },
+                )
+                projects = withContext(Dispatchers.IO) { store.load() }
+                check = check.copy(done = index + 1)
+                delay(300)
+            }
+            val result = when {
+                failed == targets.size -> "Couldn't reach the site"
+                added == 1 -> "1 new chapter"
+                added > 1 -> "$added new chapters"
+                failed > 0 -> "Up to date · $failed failed"
+                else -> "Up to date"
+            }
+            check = LibraryCheck(result = result)
+            delay(2500)
+            if (check.result == result) check = LibraryCheck()
+        }
+    }
+
     val openProject = preview ?: projects.firstOrNull { it.id == openProjectId }
 
     fun libraryEntry(path: String) = projects.firstOrNull { it.onlinePath == path }
@@ -105,13 +140,15 @@ fun MDReaderApp() {
                         NovelDetails(saved.name, "", "", emptyList(), "", 1)
                     }
                     val resume = store.progress(saved.id)?.remapTo(saved.chapters)?.chapterIndex
-                    // Novels saved before covers existed pick theirs up here.
-                    val shown = if (saved.coverUrl == null && info.cover.isNotEmpty()) {
-                        saved.copy(coverUrl = info.cover).also { withContext(Dispatchers.IO) { store.addOrReplace(it) } }
-                    } else {
-                        saved
+                    // Opening a novel clears its "+N"; novels saved before covers existed pick theirs up here.
+                    val shown = saved.copy(
+                        coverUrl = saved.coverUrl ?: info.cover.ifEmpty { null },
+                        newChapters = 0,
+                    )
+                    if (shown != saved) {
+                        withContext(Dispatchers.IO) { store.addOrReplace(shown) }
+                        projects = withContext(Dispatchers.IO) { store.load() }
                     }
-                    if (shown !== saved) projects = withContext(Dispatchers.IO) { store.load() }
                     detail = NovelDetailState(details = info, project = shown, inLibrary = true, resumeIndex = resume)
                     return@launch
                 }
@@ -159,12 +196,8 @@ fun MDReaderApp() {
             try {
                 val novel = FreeWebNovelClient.loadDetails(path)
                 val chapters = novel.chapters.toChapters()
-                val updated = current.copy(
-                    name = novel.details.title,
-                    chapters = chapters,
-                    totalChapters = chapters.size,
-                    coverUrl = novel.details.cover.ifEmpty { null } ?: current.coverUrl,
-                )
+                // Looking at the novel right now, so what this check finds is not "new" to the reader.
+                val updated = current.withChapters(novel.details.title, chapters, novel.details.cover).copy(newChapters = 0)
                 var resume = detail.resumeIndex
                 if (detail.inLibrary) {
                     withContext(Dispatchers.IO) {
@@ -249,6 +282,8 @@ fun MDReaderApp() {
             loading = loading,
             importing = importing,
             snackbarHostState = snackbarHostState,
+            check = check,
+            onCheckAll = ::checkAll,
             onImport = { folderPicker.launch(null) },
             onOpenHit = { hit ->
                 detailPath = hit.path

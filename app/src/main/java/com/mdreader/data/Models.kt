@@ -47,6 +47,10 @@ data class Project(
     val newestFirst: Boolean = false,
     /** Cover image URL of an online novel, if the site has one. */
     val coverUrl: String? = null,
+    /** When new chapters last appeared (online) or the shelf entry last changed; 0 if never. */
+    val updatedAt: Long = 0,
+    /** Chapters found by checks since the novel was last opened; shown as "+N" on the shelf. */
+    val newChapters: Int = 0,
 ) {
     val isOnline: Boolean get() = onlinePath != null
 }

@@ -244,12 +244,15 @@ fun AddNovelDock(
     }
 }
 
+/** The dock with nothing open: hairline 1 + top 12 + field 48 + bottom 22, before the system inset. */
+val AddNovelDockIdleHeight = 83.dp
+
 @Composable
 private fun DockChip(text: String, description: String, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
-            .size(30.dp)
+            .size(40.dp)
             .border(1.dp, scheme.onSurface)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,

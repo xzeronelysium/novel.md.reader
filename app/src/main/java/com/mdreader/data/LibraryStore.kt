@@ -145,6 +145,8 @@ class LibraryStore(context: Context) {
             totalChapters = if (item.has("totalChapters")) item.optInt("totalChapters") else null,
             newestFirst = item.optBoolean("newestFirst", false),
             coverUrl = item.optString("coverUrl").ifEmpty { null },
+            updatedAt = item.optLong("updatedAt", 0L),
+            newChapters = item.optInt("newChapters", 0),
         )
     }
 
@@ -172,6 +174,8 @@ class LibraryStore(context: Context) {
                     .apply { project.totalChapters?.let { put("totalChapters", it) } }
                     .apply { if (project.newestFirst) put("newestFirst", true) }
                     .apply { project.coverUrl?.let { put("coverUrl", it) } }
+                    .apply { if (project.updatedAt > 0) put("updatedAt", project.updatedAt) }
+                    .apply { if (project.newChapters > 0) put("newChapters", project.newChapters) }
                     .put("chapters", chaptersArray)
             )
         }

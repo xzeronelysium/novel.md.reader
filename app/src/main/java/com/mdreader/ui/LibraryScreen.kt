@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,8 +60,44 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.mdreader.data.Project
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import com.mdreader.data.LibrarySort
+import com.mdreader.data.ageLabel
+import com.mdreader.data.matching
+import com.mdreader.data.ordered
 import com.mdreader.data.Progress
 
+/** Card border + inner padding, so the shelf titles start exactly under the Continue title. */
+private val INDEX_COLUMN = 21.dp
+
+/** Progress of a "check every novel" pull on the shelf. */
+data class LibraryCheck(
+    val refreshing: Boolean = false,
+    val done: Int = 0,
+    val total: Int = 0,
+    /** Short outcome shown briefly after a check ("Up to date", "3 new chapters"). */
+    val result: String? = null,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     projects: List<Project>,
@@ -66,6 +105,8 @@ fun LibraryScreen(
     loading: Boolean,
     importing: Boolean,
     snackbarHostState: SnackbarHostState,
+    check: LibraryCheck,
+    onCheckAll: () -> Unit,
     onImport: () -> Unit,
     onOpenHit: (NovelHit) -> Unit,
     onOpen: (Project) -> Unit,
@@ -74,7 +115,12 @@ fun LibraryScreen(
 ) {
     var pendingRemoval by remember { mutableStateOf<Project?>(null) }
     var searchActive by rememberSaveable { mutableStateOf(false) }
+    var sort by rememberSaveable { mutableStateOf(LibrarySort.Updated) }
+    var findOpen by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
     val scheme = MaterialTheme.colorScheme
+    // The list ends exactly where the idle dock begins, so the last row is never covered.
+    val dockClearance = AddNovelDockIdleHeight + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     Box(
         modifier = Modifier
@@ -98,7 +144,7 @@ fun LibraryScreen(
 
             LibraryHeader(novelCount = projects.size)
 
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(32.dp))
 
             when {
                 loading -> Box(
@@ -121,47 +167,94 @@ fun LibraryScreen(
                 )
 
                 else -> {
-                    // The novel read most recently leads; the rest keep the shelf order.
+                    // The novel read most recently leads, frozen above the shelf.
                     val lead = projects
                         .mapNotNull { p -> progressOf(p.id)?.let { p to it } }
                         .maxByOrNull { it.second.updatedAt }
-                    val others = projects.filter { it.id != lead?.first?.id }
-                    LazyColumn(
+                    val shown = projects
+                        .ordered(sort) { progressOf(it.id)?.updatedAt ?: 0L }
+                        .matching(query)
+                    val now = System.currentTimeMillis()
+
+                    if (lead != null) {
+                        Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
+                            ContinueCard(
+                                project = lead.first,
+                                progress = lead.second,
+                                onOpen = { onOpen(lead.first) },
+                                onRefresh = { onRefresh(lead.first) },
+                                onRemove = { pendingRemoval = lead.first },
+                            )
+                        }
+                        Spacer(Modifier.height(32.dp))
+                    }
+
+                    ShelfBar(
+                        total = projects.size,
+                        shown = shown.size,
+                        sort = sort,
+                        onSort = { sort = it },
+                        findOpen = findOpen,
+                        query = query,
+                        onQuery = { query = it },
+                        onFindOpen = { findOpen = it },
+                    )
+
+                    val pullState = rememberPullToRefreshState()
+                    PullToRefreshBox(
+                        isRefreshing = check.refreshing,
+                        onRefresh = onCheckAll,
+                        state = pullState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentPadding = PaddingValues(start = ScreenPad, end = ScreenPad, bottom = 96.dp),
+                        indicator = {
+                            CheckStrip(
+                                fraction = pullState.distanceFraction,
+                                refreshing = check.refreshing,
+                                result = check.result,
+                                modifier = Modifier.align(Alignment.TopCenter),
+                                busyText = "Checking \u00b7 ${check.done} / ${check.total}",
+                                pullText = "Pull to check all novels",
+                                releaseText = "Release to check all novels",
+                            )
+                        },
                     ) {
-                        if (lead != null) {
-                            item(key = "continue") {
-                                ContinueCard(
-                                    project = lead.first,
-                                    progress = lead.second,
-                                    onOpen = { onOpen(lead.first) },
-                                    onRefresh = { onRefresh(lead.first) },
-                                    onRemove = { pendingRemoval = lead.first },
-                                )
-                            }
+                        // The list slides down to make room for the strip; the frozen part never moves.
+                        val stripShown = if (check.refreshing || check.result != null) {
+                            1f
+                        } else {
+                            pullState.distanceFraction.coerceIn(0f, 1f)
                         }
-                        if (others.isNotEmpty()) {
-                            item(key = "label") {
-                                Micro(
-                                    text = if (lead != null) "Library · ${others.size}" else "Library",
-                                    modifier = Modifier.padding(top = 28.dp, bottom = 4.dp),
-                                )
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { translationY = stripShown * 44.dp.toPx() },
+                            contentPadding = PaddingValues(start = ScreenPad, end = ScreenPad, bottom = dockClearance),
+                        ) {
+                            if (shown.isEmpty()) {
+                                item(key = "none") {
+                                    Text(
+                                        text = "No novel matches \u201c${query.trim()}\u201d.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = scheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 24.dp),
+                                    )
+                                }
                             }
-                        }
-                        itemsIndexed(others, key = { _, project -> project.id }) { index, project ->
-                            Column {
-                                ProjectRow(
-                                    index = index,
-                                    project = project,
-                                    progress = progressOf(project.id),
-                                    onOpen = { onOpen(project) },
-                                    onRefresh = { onRefresh(project) },
-                                    onRemove = { pendingRemoval = project },
-                                )
-                                if (index < others.lastIndex) Hairline()
+                            itemsIndexed(shown, key = { _, project -> project.id }) { index, project ->
+                                Column {
+                                    ProjectRow(
+                                        index = index,
+                                        project = project,
+                                        progress = progressOf(project.id),
+                                        now = now,
+                                        onOpen = { onOpen(project) },
+                                        onRefresh = { onRefresh(project) },
+                                        onRemove = { pendingRemoval = project },
+                                    )
+                                    Hairline()
+                                }
                             }
                         }
                     }
@@ -225,7 +318,7 @@ fun LibraryScreen(
 @Composable
 private fun LibraryHeader(novelCount: Int) {
     Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(16.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -245,7 +338,7 @@ private fun LibraryHeader(novelCount: Int) {
             Micro(text = "${novelCount.toString().padStart(2, '0')} novels")
         }
 
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(32.dp))
 
         Text(
             text = "Library",
@@ -256,12 +349,159 @@ private fun LibraryHeader(novelCount: Int) {
     }
 }
 
+/**
+ * The bar the shelf hangs from, frozen with the Continue card. Order segments and a find glyph
+ * share one 40 dp row; the glyph turns the row into a 48 dp filter field in the same place.
+ */
+@Composable
+private fun ShelfBar(
+    total: Int,
+    shown: Int,
+    sort: LibrarySort,
+    onSort: (LibrarySort) -> Unit,
+    findOpen: Boolean,
+    query: String,
+    onQuery: (String) -> Unit,
+    onFindOpen: (Boolean) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(findOpen) { if (findOpen) focus.requestFocus() }
+
+    Column {
+        if (findOpen) {
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = ScreenPad)
+                    .fillMaxWidth()
+                    .height(48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.size(40.dp).offset(x = (-13).dp), contentAlignment = Alignment.Center) {
+                    SearchGlyph()
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQuery,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+                    cursorBrush = SolidColor(scheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
+                    modifier = Modifier
+                        .weight(1f)
+                        .offset(x = (-13).dp)
+                        .focusRequester(focus),
+                    decorationBox = { field ->
+                        Box {
+                            if (query.isEmpty()) {
+                                Text(
+                                    text = "Filter library",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                )
+                            }
+                            field()
+                        }
+                    },
+                )
+                Micro(text = "$shown / $total")
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .offset(x = 13.dp)
+                        .clickable {
+                            onQuery("")
+                            keyboard?.hide()
+                            onFindOpen(false)
+                        }
+                        .semantics {
+                            contentDescription = "Close filter"
+                            role = Role.Button
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("\u2715", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = ScreenPad)
+                    .fillMaxWidth()
+                    .height(40.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Micro(text = "Library \u00b7 $total")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SortSegments(sort = sort, onSort = onSort)
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .offset(x = 13.dp)
+                            .clickable { onFindOpen(true) }
+                            .semantics {
+                                contentDescription = "Filter library"
+                                role = Role.Button
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        SearchGlyph()
+                    }
+                }
+            }
+        }
+        Hairline(
+            modifier = Modifier.padding(horizontal = ScreenPad),
+            color = if (findOpen) scheme.onSurface else scheme.outlineVariant,
+        )
+    }
+}
+
+@Composable
+private fun SortSegments(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val options = listOf(
+        LibrarySort.Updated to "UPDATED",
+        LibrarySort.Read to "READ",
+        LibrarySort.Title to "A\u2013Z",
+    )
+    Row(modifier = Modifier.height(32.dp).border(1.dp, scheme.onSurface)) {
+        options.forEach { (option, label) ->
+            val selected = option == sort
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .background(if (selected) scheme.onSurface else Color.Transparent)
+                    .clickable { onSort(option) }
+                    .padding(horizontal = 10.dp)
+                    .semantics {
+                        contentDescription = "Order by $label"
+                        role = Role.Button
+                        this.selected = selected
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (selected) scheme.background else scheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ProjectRow(
     index: Int,
     project: Project,
     progress: Progress?,
+    now: Long,
     onOpen: () -> Unit,
     onRefresh: () -> Unit,
     onRemove: () -> Unit,
@@ -287,7 +527,7 @@ private fun ProjectRow(
                     onClick = onOpen,
                     onLongClick = { menuOpen = true },
                 )
-                .padding(vertical = 20.dp),
+                .padding(vertical = 15.dp),
             verticalAlignment = Alignment.Top,
         ) {
             Text(
@@ -295,7 +535,7 @@ private fun ProjectRow(
                 style = MaterialTheme.typography.labelSmall,
                 color = scheme.onSurfaceVariant.copy(alpha = 0.75f),
                 modifier = Modifier
-                    .width(26.dp)
+                    .width(INDEX_COLUMN)
                     .padding(top = 4.dp),
             )
 
@@ -321,6 +561,22 @@ private fun ProjectRow(
                 )
             }
 
+            // Newest news on the title line, how long ago on the meta line.
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(56.dp)) {
+                Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.CenterEnd) {
+                    if (project.newChapters > 0) {
+                        Text(
+                            text = "+${project.newChapters}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = scheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(7.dp))
+                Micro(text = ageLabel(now, maxOf(project.updatedAt, project.importedAt)))
+            }
+
             ProjectMenu(
                 project = project,
                 menuOpen = menuOpen,
@@ -334,7 +590,7 @@ private fun ProjectRow(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .offset(x = (-ScreenPad), y = 21.dp)
+                    .offset(x = (-ScreenPad), y = 16.dp)
                     .width(2.dp)
                     .height(20.dp)
                     .background(scheme.primary),
@@ -486,7 +742,7 @@ private fun ContinueCard(
     val percent = (fraction * 100).toInt().coerceIn(1, 100)
 
     Column {
-        Micro(text = "Continue reading", accent = true, modifier = Modifier.padding(bottom = 12.dp))
+        Micro(text = "Continue reading", accent = true, modifier = Modifier.padding(bottom = 16.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()

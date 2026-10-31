@@ -301,7 +301,15 @@ private fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
 
 /** The strip that slides down while pulling, then reports the outcome of the check. */
 @Composable
-private fun CheckStrip(fraction: Float, refreshing: Boolean, result: String?, modifier: Modifier = Modifier) {
+internal fun CheckStrip(
+    fraction: Float,
+    refreshing: Boolean,
+    result: String?,
+    modifier: Modifier = Modifier,
+    busyText: String = "Checking…",
+    pullText: String = "Pull to check for new chapters",
+    releaseText: String = "Release to check",
+) {
     val scheme = MaterialTheme.colorScheme
     val height = 44.dp
     val visible = refreshing || result != null
@@ -326,10 +334,10 @@ private fun CheckStrip(fraction: Float, refreshing: Boolean, result: String?, mo
         }
         Micro(
             text = when {
-                refreshing -> "Checking…"
+                refreshing -> busyText
                 result != null -> result
-                fraction >= 1f -> "Release to check"
-                else -> "Pull to check for new chapters"
+                fraction >= 1f -> releaseText
+                else -> pullText
             },
             accent = result != null && !refreshing,
         )
