@@ -4,6 +4,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +28,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import com.mdreader.data.online.FreeWebNovelClient
@@ -96,12 +100,11 @@ private fun DrawScope.drawCropped(
     )
 }
 
-private const val BACKDROP_WIDTH = 28
-private const val GLOW_WIDTH = 12
+private const val FIELD_WIDTH = 40
 
 /**
  * A copy shrunk to [width] px wide in halving steps (one big jump would alias), which
- * stretches back up as a smooth blur whatever the source's sharpness.
+ * stretches back up smoothly whatever the source's sharpness.
  */
 private fun ImageBitmap.smoothed(width: Int): ImageBitmap {
     var bitmap = asAndroidBitmap()
@@ -112,59 +115,94 @@ private fun ImageBitmap.smoothed(width: Int): ImageBitmap {
     return Bitmap.createScaledBitmap(bitmap, width, targetHeight, true).asImageBitmap()
 }
 
-private val InkOnly = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+/** [smoothed], then box-blurred three times, so stretching it to screen size shows no grid. */
+private fun ImageBitmap.blurredField(): ImageBitmap {
+    val base = smoothed(FIELD_WIDTH).asAndroidBitmap().copy(Bitmap.Config.ARGB_8888, true)
+    val w = base.width
+    val h = base.height
+    var pixels = IntArray(w * h)
+    base.getPixels(pixels, 0, w, 0, 0, w, h)
+    repeat(3) { pixels = boxBlur(pixels, w, h, 3) }
+    base.setPixels(pixels, 0, w, 0, 0, w, h)
+    return base.asImageBitmap()
+}
+
+private fun boxBlur(src: IntArray, w: Int, h: Int, radius: Int): IntArray {
+    val span = 2 * radius + 1
+    fun average(read: (Int) -> Int): Int {
+        var a = 0
+        var r = 0
+        var g = 0
+        var b = 0
+        for (k in -radius..radius) {
+            val p = read(k)
+            a += p ushr 24
+            r += (p shr 16) and 0xFF
+            g += (p shr 8) and 0xFF
+            b += p and 0xFF
+        }
+        return ((a / span) shl 24) or ((r / span) shl 16) or ((g / span) shl 8) or (b / span)
+    }
+    val horizontal = IntArray(src.size)
+    for (y in 0 until h) for (x in 0 until w) {
+        horizontal[y * w + x] = average { k -> src[y * w + (x + k).coerceIn(0, w - 1)] }
+    }
+    val out = IntArray(src.size)
+    for (y in 0 until h) for (x in 0 until w) {
+        out[y * w + x] = average { k -> horizontal[(y + k).coerceIn(0, h - 1) * w + x] }
+    }
+    return out
+}
+
+private val Saturated = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1.25f) })
+
+/** Where a [coverField] is strongest and how it dissolves. */
+enum class FieldFade { Home, Detail, Page }
 
 /**
- * The cover as black-and-white ink behind the content, strongest at the top and
- * dissolving to nothing at the bottom edge, so it never ends on a line.
+ * A field of the cover's colours behind a section, as blurred as frosted glass would make it, so
+ * the cover's own sharpness never shows. It dissolves at its edges instead of ending on a line.
  */
 @Composable
-fun Modifier.coverBackdrop(cover: ImageBitmap?, page: Color): Modifier {
+fun Modifier.coverField(cover: ImageBitmap?, fade: FieldFade, alpha: Float = 0.75f): Modifier {
     if (cover == null) return this
-    val soft = remember(cover) { cover.smoothed(BACKDROP_WIDTH) }
+    val field = remember(cover) { cover.blurredField() }
+    val stops = when (fade) {
+        // Fades in above the card, holds behind it, fades out into the shelf bar.
+        FieldFade.Home -> arrayOf(
+            0f to Color.Transparent,
+            0.2f to Color.Black,
+            0.55f to Color.Black,
+            1f to Color.Transparent,
+        )
+        // Strongest at the top, gone before the button.
+        FieldFade.Detail -> arrayOf(
+            0f to Color.Black,
+            0.3f to Color.Black,
+            0.62f to Color.Black.copy(alpha = 0.5f),
+            1f to Color.Transparent,
+        )
+        // A long, soft wash over a whole page section.
+        FieldFade.Page -> arrayOf(
+            0f to Color.Black,
+            0.3f to Color.Black,
+            0.65f to Color.Black.copy(alpha = 0.6f),
+            1f to Color.Transparent,
+        )
+    }
     return graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
         .drawWithContent {
-            drawCropped(soft, alpha = 0.6f, colorFilter = InkOnly)
-            drawRect(
-                Brush.verticalGradient(
-                    0f to page.copy(alpha = 0.2f),
-                    0.55f to page.copy(alpha = 0.35f),
-                    1f to Color.Transparent,
-                ),
-            )
-            drawRect(
-                Brush.verticalGradient(
-                    0f to Color.Black,
-                    0.35f to Color.Black.copy(alpha = 0.7f),
-                    0.7f to Color.Black.copy(alpha = 0.25f),
-                    1f to Color.Transparent,
-                ),
-                blendMode = BlendMode.DstIn,
-            )
+            drawCropped(field, alpha = alpha, colorFilter = Saturated)
+            drawRect(Brush.verticalGradient(*stops), blendMode = BlendMode.DstIn)
             drawContent()
         }
 }
 
-/**
- * A soft wash of the cover's colours behind a whole page section. A tiny copy stretched
- * with smoothing looks blurred on every Android version, unlike a blur effect (12+ only).
- */
+/** The pane that sits on a [coverField]: square ink border, a darker tint, no sharp cover. */
 @Composable
-fun Modifier.coverGlow(cover: ImageBitmap?): Modifier {
-    if (cover == null) return this
-    val tiny = remember(cover) { cover.smoothed(GLOW_WIDTH) }
-    return graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-        .drawWithContent {
-            drawCropped(tiny, alpha = 0.42f)
-            drawRect(
-                Brush.verticalGradient(
-                    0f to Color.Black,
-                    0.3f to Color.Black,
-                    0.65f to Color.Black.copy(alpha = 0.6f),
-                    1f to Color.Transparent,
-                ),
-                blendMode = BlendMode.DstIn,
-            )
-            drawContent()
-        }
+fun Modifier.glassPane(): Modifier {
+    val scheme = MaterialTheme.colorScheme
+    return this
+        .background(scheme.background.copy(alpha = 0.38f))
+        .border(1.dp, scheme.onSurface.copy(alpha = 0.55f))
 }

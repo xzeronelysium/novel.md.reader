@@ -375,9 +375,10 @@ private fun Header(
     }
 
     val cover = rememberCover(details.cover.ifEmpty { project.coverUrl.orEmpty() })
-    Column(modifier = Modifier.coverGlow(cover)) {
-        // Poster ink behind the title and stats; it dissolves before the button.
-        Column(modifier = Modifier.coverBackdrop(cover, scheme.background)) {
+    // The cover only lends its colours: a frosted field behind the header, fading out above the
+    // button, and a fainter wash of it carrying on behind the summary.
+    Column(modifier = Modifier.coverField(cover, FieldFade.Page, alpha = 0.4f)) {
+        Column(modifier = Modifier.coverField(cover, FieldFade.Detail)) {
             TitleBlock(onBack = onBack, title = details.title) {
                 if (details.author.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))

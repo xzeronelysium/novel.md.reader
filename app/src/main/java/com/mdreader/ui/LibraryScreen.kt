@@ -2,10 +2,7 @@ package com.mdreader.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -177,16 +174,21 @@ fun LibraryScreen(
                     val now = System.currentTimeMillis()
 
                     if (lead != null) {
-                        Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
-                            ContinueCard(
-                                project = lead.first,
-                                progress = lead.second,
-                                onOpen = { onOpen(lead.first) },
-                                onRefresh = { onRefresh(lead.first) },
-                                onRemove = { pendingRemoval = lead.first },
-                            )
+                        val leadCover = rememberCover(lead.first.coverUrl)
+                        // The cover only lends its colours: a blurred field behind the card, whose
+                        // bottom padding is the 32 dp gap to the shelf bar.
+                        Box(modifier = Modifier.fillMaxWidth().coverField(leadCover, FieldFade.Home)) {
+                            Column(modifier = Modifier.padding(start = ScreenPad, end = ScreenPad, bottom = 32.dp)) {
+                                ContinueCard(
+                                    project = lead.first,
+                                    progress = lead.second,
+                                    glass = leadCover != null,
+                                    onOpen = { onOpen(lead.first) },
+                                    onRefresh = { onRefresh(lead.first) },
+                                    onRemove = { pendingRemoval = lead.first },
+                                )
+                            }
                         }
-                        Spacer(Modifier.height(32.dp))
                     }
 
                     ShelfBar(
@@ -730,6 +732,7 @@ private fun ProjectMenu(
 private fun ContinueCard(
     project: Project,
     progress: Progress,
+    glass: Boolean,
     onOpen: () -> Unit,
     onRefresh: () -> Unit,
     onRemove: () -> Unit,
@@ -746,31 +749,10 @@ private fun ContinueCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, scheme.onSurface)
+                // On a cover's colour field the card is a glass pane; otherwise the plain ink frame.
+                .then(if (glass) Modifier.glassPane() else Modifier.border(1.dp, scheme.onSurface))
                 .combinedClickable(onClick = onOpen, onLongClick = { menuOpen = true }),
         ) {
-            // The cover as a ghost behind the text, washed toward the page colour on the text side.
-            val cover = rememberCover(project.coverUrl)
-            if (cover != null) {
-                Image(
-                    bitmap = cover,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alpha = 0.28f,
-                    modifier = Modifier.matchParentSize(),
-                )
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                0f to scheme.background,
-                                0.25f to scheme.background,
-                                1f to scheme.background.copy(alpha = 0.35f),
-                            ),
-                        ),
-                )
-            }
             Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp)) {
                 Text(
                     text = project.name,
