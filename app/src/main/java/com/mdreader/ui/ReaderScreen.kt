@@ -58,6 +58,7 @@ import com.mdreader.data.Chapter
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
+import com.mdreader.data.Vault
 import com.mdreader.data.online.FreeWebNovelClient
 import com.mdreader.data.online.OnlineException
 import com.mdreader.data.remapTo
@@ -79,6 +80,7 @@ fun ReaderScreen(
     onProgress: (Progress) -> Unit,
 ) {
     val context = LocalContext.current
+    val vault = remember { Vault.of(context.applicationContext) }
     val chapters = project.chapters
     val lastIndex = chapters.lastIndex
     // An online list may be only partly loaded; show the site's real count.
@@ -127,7 +129,15 @@ fun ReaderScreen(
         }
 
         val outcome = if (chapter.remote) {
-            runCatching { FreeWebNovelClient.loadChapter(chapter.uri) }
+            // A downloaded chapter opens from the vault, offline; anything else comes from the site.
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    vault.read(project, chapter)?.let { text ->
+                        MarkdownParser.parse(text, markdown = true).withoutOpeningTitle(chapter.title)
+                    }
+                }.getOrNull()
+            }?.takeIf { it.isNotEmpty() }
+            if (saved != null) Result.success(saved) else runCatching { FreeWebNovelClient.loadChapter(chapter.uri) }
         } else {
             withContext(Dispatchers.IO) {
                 runCatching {

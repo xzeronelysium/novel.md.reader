@@ -11,6 +11,42 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.animation.animateContentSize
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
+import com.mdreader.data.parseChapterCount
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,7 +104,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mdreader.data.Chapter
+import com.mdreader.data.DeletePlan
+import com.mdreader.data.DownloadRequest
+import com.mdreader.data.estimatedBytes
+import com.mdreader.data.estimatedDuration
+import com.mdreader.data.formatBytes
+import com.mdreader.data.planDelete
+import com.mdreader.data.planDownload
+import com.mdreader.data.DownloadProgress
 import com.mdreader.data.Project
+import com.mdreader.data.number
 import com.mdreader.data.online.NovelDetails
 import kotlinx.coroutines.launch
 
@@ -92,10 +137,6 @@ data class NovelDetailState(
     val loadedChapters: Int = 0,
     val totalChapters: Int = 0,
 )
-
-/** The number a site chapter carries in its path (`.../chapter-2343`), or its position. */
-private fun Chapter.number(index: Int): Int =
-    Regex("(\\d+)$").find(uri)?.value?.toIntOrNull() ?: (index + 1)
 
 /** Index of chapter [number]: matched by the site's own numbering, else by position. */
 private fun List<Chapter>.indexOfNumber(number: Int): Int? {
@@ -122,6 +163,12 @@ fun NovelDetailScreen(
     onToggleLibrary: () -> Unit,
     onToggleOrder: () -> Unit,
     onRefresh: () -> Unit,
+    downloaded: Set<String>,
+    download: DownloadProgress,
+    onDownload: (DownloadRequest) -> Unit,
+    onCancelDownload: () -> Unit,
+    onDeleteDownloads: (List<String>) -> Unit,
+    sizeOf: (Collection<String>) -> Long,
 ) {
     val scheme = MaterialTheme.colorScheme
     BackHandler { onBack() }
@@ -209,6 +256,12 @@ fun NovelDetailScreen(
                             onRead = onRead,
                             onContinue = onContinue,
                             onToggleLibrary = onToggleLibrary,
+                            downloaded = downloaded,
+                            download = download,
+                            onDownload = onDownload,
+                            onCancelDownload = onCancelDownload,
+                            onDeleteDownloads = onDeleteDownloads,
+                            sizeOf = sizeOf,
                             onGoTo = { number ->
                                 val index = project.chapters.indexOfNumber(number)
                                 if (index != null) {
@@ -272,6 +325,17 @@ fun NovelDetailScreen(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f),
                                 )
+                                if (chapter.uri in downloaded) {
+                                    // A vermilion square: saved on this device, readable offline.
+                                    Spacer(Modifier.width(12.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(top = 14.dp)
+                                            .size(5.dp)
+                                            .background(scheme.primary)
+                                            .semantics { contentDescription = "Downloaded" },
+                                    )
+                                }
                             }
                             Hairline()
                         }
@@ -354,10 +418,17 @@ private fun Header(
     onRead: (Int) -> Unit,
     onContinue: () -> Unit,
     onToggleLibrary: () -> Unit,
+    downloaded: Set<String>,
+    download: DownloadProgress,
+    onDownload: (DownloadRequest) -> Unit,
+    onCancelDownload: () -> Unit,
+    onDeleteDownloads: (List<String>) -> Unit,
+    sizeOf: (Collection<String>) -> Long,
     onGoTo: (Int) -> Int?,
     onOpenNumber: (Int) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    var confirmRemove by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     var expanded by remember { mutableStateOf(false) }
@@ -446,16 +517,30 @@ private fun Header(
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        Text(
-            text = if (inLibrary) "✓ IN LIBRARY · REMOVE" else "+ ADD TO LIBRARY",
-            style = MaterialTheme.typography.labelLarge,
-            color = scheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggleLibrary)
-                .padding(vertical = 16.dp),
+        LibraryActions(
+            inLibrary = inLibrary,
+            chapters = project.chapters,
+            downloaded = downloaded,
+            resumeIndex = resumeIndex,
+            download = download,
+            sizeOf = sizeOf,
+            // Removing a novel with downloads asks first: they leave the device with it.
+            onToggleLibrary = { if (inLibrary && downloaded.isNotEmpty()) confirmRemove = true else onToggleLibrary() },
+            onDownload = onDownload,
+            onCancelDownload = onCancelDownload,
+            onDeleteDownloads = onDeleteDownloads,
         )
+        if (confirmRemove) {
+            RemoveDialog(
+                project = project,
+                downloaded = downloaded.size,
+                onDismiss = { confirmRemove = false },
+                onConfirm = {
+                    confirmRemove = false
+                    onToggleLibrary()
+                },
+            )
+        }
 
         if (details.synopsis.isNotEmpty()) {
             Column(modifier = Modifier.padding(horizontal = ScreenPad).padding(top = 6.dp)) {
@@ -534,6 +619,670 @@ private fun Header(
                 )
             }
         }
+    }
+}
+
+private enum class DeleteKind { Read, All }
+
+private fun chapterCount(n: Int) = if (n == 1) "1 chapter" else "%,d chapters".format(n)
+
+/**
+ * The row under Continue. Idle it is two outlined buttons, Download and the library toggle.
+ * Tapping Download morphs that row in place into a stepper beside a split Download button, with a
+ * row of presets under it that mirrors the two columns above. The trash arm on the split button
+ * opens the Delete menu; deleting asks in the same footprint. While a download runs, Download is
+ * its own progress bar and stop control. Outside the library "Add to library" takes the row.
+ *
+ * One grid throughout: 28 dp side margins, two 12 dp-separated columns, 48 dp tall controls.
+ */
+@Composable
+private fun LibraryActions(
+    inLibrary: Boolean,
+    chapters: List<Chapter>,
+    downloaded: Set<String>,
+    resumeIndex: Int?,
+    download: DownloadProgress,
+    sizeOf: (Collection<String>) -> Long,
+    onToggleLibrary: () -> Unit,
+    onDownload: (DownloadRequest) -> Unit,
+    onCancelDownload: () -> Unit,
+    onDeleteDownloads: (List<String>) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    var open by remember { mutableStateOf(false) }
+    var request by remember { mutableStateOf<DownloadRequest>(DownloadRequest.Next(10)) }
+    var confirm by remember { mutableStateOf<DeleteKind?>(null) }
+
+    fun close() {
+        open = false
+        confirm = null
+    }
+    LaunchedEffect(download.running) { if (download.running) close() }
+    // Back leaves the morphed row (and an open question) before it leaves the page.
+    BackHandler(enabled = open || confirm != null) { close() }
+
+    val plan = remember(chapters, downloaded, resumeIndex, request) {
+        planDownload(chapters, downloaded, resumeIndex, request)
+    }
+    val remaining = remember(chapters, downloaded, resumeIndex) {
+        planDownload(chapters, downloaded, resumeIndex, DownloadRequest.Next(Int.MAX_VALUE)).size
+    }
+    val deletable = remember(chapters, downloaded, resumeIndex) { planDelete(chapters, downloaded, resumeIndex) }
+
+    Column(
+        modifier = Modifier
+            .padding(horizontal = ScreenPad)
+            .padding(top = 12.dp)
+            .animateContentSize(),
+    ) {
+        val kind = confirm
+        when {
+            !inLibrary -> OutlineButton(
+                text = "+ ADD TO LIBRARY",
+                description = "Add to library",
+                onClick = onToggleLibrary,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            kind != null -> DeleteConfirm(
+                kind = kind,
+                deletable = deletable,
+                sizeOf = sizeOf,
+                onCancel = { confirm = null },
+                onConfirm = { paths ->
+                    onDeleteDownloads(paths)
+                    close()
+                },
+            )
+
+            open && !download.running -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Stepper(
+                        number = plan.size,
+                        remaining = remaining,
+                        canDecrease = plan.size > 1,
+                        canIncrease = plan.size < remaining,
+                        onStep = { delta ->
+                            request = DownloadRequest.Next((plan.size + delta).coerceIn(1, maxOf(remaining, 1)))
+                        },
+                        onSet = { typed -> request = DownloadRequest.Next(typed) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SplitDownload(
+                        readout = "${formatBytes(estimatedBytes(plan.size))} · ${estimatedDuration(plan.size)}",
+                        canDownload = plan.isNotEmpty(),
+                        savedCount = downloaded.size,
+                        deletable = deletable,
+                        sizeOf = sizeOf,
+                        onDownload = {
+                            close()
+                            onDownload(request)
+                        },
+                        onDelete = { confirm = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PresetGroup(
+                        labels = listOf("10", "50"),
+                        selected = when (request) {
+                            DownloadRequest.Next(10) -> 0
+                            DownloadRequest.Next(50) -> 1
+                            else -> -1
+                        },
+                        onSelect = { request = DownloadRequest.Next(if (it == 0) 10 else 50) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    PresetGroup(
+                        labels = listOf("UNREAD", "ALL"),
+                        selected = when (request) {
+                            DownloadRequest.Unread -> 0
+                            DownloadRequest.All -> 1
+                            else -> -1
+                        },
+                        onSelect = { request = if (it == 0) DownloadRequest.Unread else DownloadRequest.All },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                // The way back to Download + In library, as wide as the two columns together.
+                Row(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .clickable { close() }
+                        .semantics {
+                            contentDescription = "Close download options"
+                            role = Role.Button
+                        },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Micro(text = "Close", color = scheme.onSurface)
+                    Spacer(Modifier.width(8.dp))
+                    Canvas(Modifier.size(8.dp)) {
+                        val stroke = 1.dp.toPx()
+                        drawLine(scheme.onSurface, Offset(0f, 0f), Offset(size.width, size.height), stroke)
+                        drawLine(scheme.onSurface, Offset(size.width, 0f), Offset(0f, size.height), stroke)
+                    }
+                }
+            }
+
+            else -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (download.running) {
+                    val fraction = if (download.total > 0) download.done.toFloat() / download.total else 0f
+                    OutlineButton(
+                        text = "${download.done} / ${download.total} · ✕",
+                        description = "Stop downloading",
+                        onClick = onCancelDownload,
+                        modifier = Modifier.weight(1f),
+                        fill = fraction,
+                    )
+                } else {
+                    OutlineButton(
+                        text = "↓ DOWNLOAD ▾",
+                        description = "Download chapters",
+                        onClick = { open = true },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                OutlineButton(
+                    text = "✓ IN LIBRARY",
+                    description = "In library, tap to remove",
+                    onClick = onToggleLibrary,
+                    modifier = Modifier.weight(1f),
+                    soft = true,
+                )
+            }
+        }
+        download.message?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+            )
+        }
+        // With the summary's 6 dp, the same 22 dp gap the page had below its old text rows.
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * minus, the chapter count, plus: one 1 dp ink outline, 48 dp tall, hairline dividers. Tapping
+ * the number turns it into a field for typing an exact amount; it is applied when you press Done,
+ * tap minus or plus, or move on, and is clamped to what is left to save.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Stepper(
+    number: Int,
+    remaining: Int,
+    canDecrease: Boolean,
+    canIncrease: Boolean,
+    onStep: (Int) -> Unit,
+    onSet: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+    var editing by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    var field by remember { mutableStateOf(TextFieldValue("")) }
+    val focus = remember { FocusRequester() }
+    val bring = remember { BringIntoViewRequester() }
+
+    fun commit() {
+        if (!editing) return
+        editing = false
+        focused = false
+        parseChapterCount(field.text, remaining)?.let(onSet)
+        keyboard?.hide()
+        focusManager.clearFocus()
+    }
+
+    LaunchedEffect(editing) { if (editing) focus.requestFocus() }
+    // A preset or anything else changed the number under a half-typed one: drop what was typed.
+    LaunchedEffect(number) {
+        if (editing) {
+            editing = false
+            focused = false
+            keyboard?.hide()
+            focusManager.clearFocus()
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .height(48.dp)
+            .border(1.dp, scheme.onSurface)
+            .bringIntoViewRequester(bring),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // While typing, minus and plus first apply what was typed instead of stepping from stale.
+        StepButton(plus = false, enabled = canDecrease || editing, onStep = { if (editing) commit() else onStep(-1) })
+        Box(Modifier.width(1.dp).height(24.dp).background(scheme.onSurface.copy(alpha = 0.3f)))
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(enabled = remaining > 0 && !editing) {
+                    val text = number.toString()
+                    // Everything selected, so the first digit typed replaces the number.
+                    field = TextFieldValue(text, TextRange(0, text.length))
+                    editing = true
+                }
+                .semantics { contentDescription = "${chapterCount(number)} to download, tap to type a number" },
+            contentAlignment = Alignment.Center,
+        ) {
+            val style = TextStyle(
+                color = scheme.onSurface,
+                fontFamily = FontFamily.Serif,
+                fontSize = 24.sp,
+                textAlign = TextAlign.Center,
+            )
+            if (editing) {
+                BasicTextField(
+                    value = field,
+                    onValueChange = { value -> field = value.copy(text = value.text.filter { it.isDigit() }.take(6)) },
+                    singleLine = true,
+                    textStyle = style,
+                    cursorBrush = SolidColor(scheme.primary),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { commit() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus)
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                focused = true
+                                scope.launch { bring.bringIntoView() }
+                            } else if (focused) {
+                                commit()
+                            }
+                        },
+                )
+            } else {
+                Text(text = "%,d".format(number), style = style, maxLines = 1)
+            }
+        }
+        Box(Modifier.width(1.dp).height(24.dp).background(scheme.onSurface.copy(alpha = 0.3f)))
+        StepButton(plus = true, enabled = canIncrease || editing, onStep = { if (editing) commit() else onStep(1) })
+    }
+}
+
+/** A 48 dp target with a drawn hairline glyph. Press steps once; hold repeats. */
+@Composable
+private fun StepButton(plus: Boolean, enabled: Boolean, onStep: () -> Unit) {
+    val color = MaterialTheme.colorScheme.onSurface
+    val scope = rememberCoroutineScope()
+    val step by rememberUpdatedState(onStep)
+    Box(
+        modifier = Modifier
+            .width(48.dp)
+            .fillMaxHeight()
+            .alpha(if (enabled) 1f else 0.3f)
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        val repeat = scope.launch {
+                            step()
+                            delay(400)
+                            while (true) {
+                                delay(70)
+                                step()
+                            }
+                        }
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            repeat.cancel()
+                        }
+                    },
+                )
+            }
+            .semantics {
+                contentDescription = if (plus) "Download more chapters" else "Download fewer chapters"
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(12.dp)) {
+            val stroke = 1.dp.toPx()
+            drawLine(color, Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), stroke)
+            if (plus) drawLine(color, Offset(size.width / 2f, 0f), Offset(size.width / 2f, size.height), stroke)
+        }
+    }
+}
+
+/**
+ * The go button and, on its right, the trash arm that opens the Delete menu. The two share one
+ * 48 dp box; the menu hangs from the box's bottom edge, as wide as the box and flush with its
+ * left edge, so it sits exactly under the column it belongs to.
+ */
+@Composable
+private fun SplitDownload(
+    readout: String,
+    canDownload: Boolean,
+    savedCount: Int,
+    deletable: DeletePlan,
+    sizeOf: (Collection<String>) -> Long,
+    onDownload: () -> Unit,
+    onDelete: (DeleteKind) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    var menuOpen by remember { mutableStateOf(false) }
+    var widthPx by remember { mutableIntStateOf(0) }
+    val canDelete = savedCount > 0
+
+    Box(modifier = modifier.height(48.dp).onSizeChanged { widthPx = it.width }) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scheme.onSurface.copy(alpha = if (canDownload) 1f else 0.35f)),
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(enabled = canDownload, onClick = onDownload)
+                    .semantics {
+                        contentDescription = "Download, $readout"
+                        role = Role.Button
+                    },
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "↓ DOWNLOAD",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.background,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = readout.uppercase(),
+                    color = scheme.background.copy(alpha = 0.65f),
+                    fontSize = 9.5.sp,
+                    lineHeight = 11.sp,
+                    letterSpacing = 1.sp,
+                    maxLines = 1,
+                )
+            }
+            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.background.copy(alpha = 0.3f)))
+            Box(
+                modifier = Modifier
+                    .width(44.dp)
+                    .fillMaxHeight()
+                    .background(if (menuOpen) scheme.background.copy(alpha = 0.12f) else Color.Transparent)
+                    .clickable(enabled = canDelete) { menuOpen = true }
+                    .semantics {
+                        contentDescription = "Delete downloaded chapters"
+                        role = Role.Button
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                TrashGlyph(color = scheme.primary.copy(alpha = if (canDelete) 1f else 0.35f))
+            }
+        }
+        if (menuOpen) {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = IntOffset(0, with(density) { 48.dp.roundToPx() }),
+                onDismissRequest = { menuOpen = false },
+                properties = PopupProperties(focusable = true),
+            ) {
+                DeleteMenu(
+                    width = with(density) { widthPx.toDp() },
+                    savedCount = savedCount,
+                    deletable = deletable,
+                    sizeOf = sizeOf,
+                    onPick = { kind ->
+                        menuOpen = false
+                        onDelete(kind)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** The Delete menu: a "Delete" header with the saved total, then Read chapters and All saved. */
+@Composable
+private fun DeleteMenu(
+    width: Dp,
+    savedCount: Int,
+    deletable: DeletePlan,
+    sizeOf: (Collection<String>) -> Long,
+    onPick: (DeleteKind) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    // File sizes are read off the main thread; the rows fill in a moment after the menu opens.
+    val sizes by produceState(0L to 0L, deletable) {
+        value = withContext(Dispatchers.IO) { sizeOf(deletable.read) to sizeOf(deletable.all) }
+    }
+    Column(
+        modifier = Modifier
+            .width(width)
+            .background(scheme.surfaceContainer)
+            .border(1.dp, scheme.onSurface.copy(alpha = 0.55f)),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Micro(text = "Delete", accent = true)
+            Micro(text = "%,d · %s".format(savedCount, formatBytes(sizes.second)))
+        }
+        Hairline()
+        DeleteRow("Read chapters", "None read yet", deletable.read.size, sizes.first) { onPick(DeleteKind.Read) }
+        Hairline()
+        DeleteRow("All saved", "Nothing saved", deletable.all.size, sizes.second) { onPick(DeleteKind.All) }
+    }
+}
+
+@Composable
+private fun DeleteRow(title: String, emptyText: String, count: Int, bytes: Long, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val enabled = count > 0
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = if (enabled) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.5f),
+        )
+        Spacer(Modifier.height(2.dp))
+        Micro(text = if (enabled) "%,d · %s".format(count, formatBytes(bytes)) else emptyText)
+    }
+}
+
+/** The question replaces the stepper and presets, with the same 48 + 8 + 40 dp footprint. */
+@Composable
+private fun DeleteConfirm(
+    kind: DeleteKind,
+    deletable: DeletePlan,
+    sizeOf: (Collection<String>) -> Long,
+    onCancel: () -> Unit,
+    onConfirm: (List<String>) -> Unit,
+) {
+    val paths = if (kind == DeleteKind.Read) deletable.read else deletable.all
+    val bytes by produceState(0L, paths) { value = withContext(Dispatchers.IO) { sizeOf(paths) } }
+    Column {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = if (kind == DeleteKind.Read) {
+                    "Delete ${chapterCount(paths.size)} you have read?"
+                } else {
+                    "Delete all ${chapterCount(paths.size)}?"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(2.dp))
+            Micro(text = "Frees ${formatBytes(bytes)} · stays in your library")
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlineButton(
+                text = "CANCEL",
+                description = "Cancel",
+                onClick = onCancel,
+                modifier = Modifier.weight(1f),
+                height = 40.dp,
+            )
+            OutlineButton(
+                text = "DELETE ${paths.size}",
+                description = "Delete ${chapterCount(paths.size)}",
+                onClick = { onConfirm(paths) },
+                modifier = Modifier.weight(1f),
+                height = 40.dp,
+                danger = true,
+            )
+        }
+    }
+}
+
+/** Two or more cells in one outlined, hairline-divided control; the chosen one is filled. */
+@Composable
+private fun PresetGroup(
+    labels: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .border(1.dp, scheme.onSurface),
+    ) {
+        labels.forEachIndexed { index, label ->
+            if (index > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.onSurface.copy(alpha = 0.3f)))
+            val chosen = index == selected
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(if (chosen) scheme.onSurface else Color.Transparent)
+                    .clickable { onSelect(index) }
+                    .semantics {
+                        contentDescription = "Download $label"
+                        role = Role.Button
+                        this.selected = chosen
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (chosen) scheme.background else scheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+/** A trash can in hairlines: lid, handle, body and two ribs. */
+@Composable
+private fun TrashGlyph(color: Color) {
+    Canvas(Modifier.size(width = 14.dp, height = 16.dp)) {
+        val stroke = 1.dp.toPx()
+        val u = size.width / 14f
+        drawLine(color, Offset(0f, 3.5f * u), Offset(14f * u, 3.5f * u), stroke)
+        val handle = Path().apply {
+            moveTo(5f * u, 3.5f * u)
+            lineTo(5f * u, 1f * u)
+            lineTo(9f * u, 1f * u)
+            lineTo(9f * u, 3.5f * u)
+        }
+        drawPath(handle, color, style = Stroke(stroke))
+        val body = Path().apply {
+            moveTo(2f * u, 3.5f * u)
+            lineTo(3f * u, 15f * u)
+            lineTo(11f * u, 15f * u)
+            lineTo(12f * u, 3.5f * u)
+        }
+        drawPath(body, color, style = Stroke(stroke))
+        drawLine(color, Offset(5.5f * u, 6f * u), Offset(5.5f * u, 12f * u), stroke)
+        drawLine(color, Offset(8.5f * u, 6f * u), Offset(8.5f * u, 12f * u), stroke)
+    }
+}
+
+/** A square ink-outlined button; [fill] paints progress from the left behind the label. */
+@Composable
+private fun OutlineButton(
+    text: String,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    soft: Boolean = false,
+    fill: Float? = null,
+    height: Dp = 48.dp,
+    danger: Boolean = false,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val border = when {
+        danger -> scheme.primary
+        soft -> scheme.onSurface.copy(alpha = 0.45f)
+        else -> scheme.onSurface
+    }
+    Box(
+        modifier = modifier
+            .height(height)
+            .border(1.dp, border)
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = description
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (fill != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .fillMaxWidth(fill.coerceIn(0f, 1f))
+                    .background(scheme.primary.copy(alpha = 0.35f)),
+            )
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            color = when {
+                danger -> scheme.primary
+                soft -> scheme.onSurfaceVariant
+                else -> scheme.onSurface
+            },
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

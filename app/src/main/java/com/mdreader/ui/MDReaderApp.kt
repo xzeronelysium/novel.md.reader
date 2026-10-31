@@ -16,6 +16,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.mdreader.data.ChapterSource
+import com.mdreader.data.DownloadRequest
+import com.mdreader.data.formatBytes
+import com.mdreader.data.DownloadProgress
+import com.mdreader.data.Vault
+import com.mdreader.data.downloadChapters
+import com.mdreader.data.planDownload
 import com.mdreader.data.ImportException
 import com.mdreader.data.LibraryStore
 import com.mdreader.data.Project
@@ -27,6 +33,9 @@ import com.mdreader.data.online.NovelDetails
 import com.mdreader.data.online.OnlineException
 import com.mdreader.data.toChapters
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import java.time.LocalDate
 import kotlinx.coroutines.delay
 import java.util.UUID
 import com.mdreader.data.importFolder
@@ -42,6 +51,12 @@ fun MDReaderApp() {
     val scope = rememberCoroutineScope()
     val store = remember { LibraryStore(context.applicationContext) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val vault = remember { Vault.of(context.applicationContext) }
+    // Bumped whenever a chapter is saved or deleted, so the page redraws its "saved" marks.
+    var vaultTick by remember { mutableIntStateOf(0) }
+    var download by remember { mutableStateOf(DownloadProgress()) }
+    var downloadFor by remember { mutableStateOf<String?>(null) }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
 
     var projects by remember { mutableStateOf<List<Project>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -118,6 +133,72 @@ fun MDReaderApp() {
             delay(2500)
             if (check.result == result) check = LibraryCheck()
         }
+    }
+
+    /** Saves the chapters [request] asks for into the project's vault. Runs while the app is open. */
+    fun startDownload(request: DownloadRequest) {
+        val project = detail.project ?: return
+        if (!detail.inLibrary) return
+        if (download.running) {
+            notify("A download is already running.")
+            return
+        }
+        val plan = planDownload(project.chapters, vault.downloaded(project), detail.resumeIndex, request)
+        downloadFor = project.id
+        if (plan.isEmpty()) {
+            download = DownloadProgress(message = "Everything asked for is already saved")
+            return
+        }
+        val author = detail.details?.author
+        download = DownloadProgress(running = true, total = plan.size)
+        downloadJob = scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    downloadChapters(project, plan, vault, author, LocalDate.now().toString()) { progress ->
+                        download = progress
+                        vaultTick++
+                    }
+                }
+                download = result
+            } catch (e: CancellationException) {
+                download = DownloadProgress(message = "Stopped, ${vault.count(project)} chapters saved")
+                throw e
+            } finally {
+                vaultTick++
+            }
+        }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+    }
+
+    /** Deletes the saved chapters at [paths] (read ones, or all) and says how much room that gave back. */
+    fun deleteDownloads(paths: List<String>) {
+        val project = detail.project ?: return
+        if (paths.isEmpty()) return
+        scope.launch {
+            if (downloadFor == project.id) downloadJob?.cancelAndJoin()
+            val freed = withContext(Dispatchers.IO) {
+                val bytes = vault.bytesOf(project, paths)
+                vault.delete(project, paths)
+                bytes
+            }
+            val count = if (paths.size == 1) "1 chapter" else "${paths.size} chapters"
+            download = DownloadProgress(message = "$count deleted · ${formatBytes(freed)} freed")
+            downloadFor = project.id
+            vaultTick++
+        }
+    }
+
+    /** Takes a novel out of the library, and its downloaded chapters off the device with it. */
+    suspend fun removeNovel(project: Project) {
+        if (downloadFor == project.id) downloadJob?.cancelAndJoin()
+        withContext(Dispatchers.IO) {
+            store.remove(project.id)
+            vault.deleteAll(project)
+        }
+        vaultTick++
     }
 
     val openProject = preview ?: projects.firstOrNull { it.id == openProjectId }
@@ -241,6 +322,15 @@ fun MDReaderApp() {
                 preview = project
             },
             onRefresh = { detailPath?.let(::refreshDetail) },
+            downloaded = detail.project?.let { project ->
+                vaultTick // read so the marks follow every save
+                vault.downloaded(project)
+            }.orEmpty(),
+            download = if (downloadFor == detail.project?.id) download else DownloadProgress(),
+            onDownload = ::startDownload,
+            onCancelDownload = ::cancelDownload,
+            onDeleteDownloads = ::deleteDownloads,
+            sizeOf = { paths -> detail.project?.let { vault.bytesOf(it, paths) } ?: 0L },
             onContinue = {
                 val project = detail.project ?: return@NovelDetailScreen
                 previewStart = store.progress(project.id)?.remapTo(project.chapters)
@@ -262,7 +352,7 @@ fun MDReaderApp() {
                 val project = detail.project ?: return@NovelDetailScreen
                 scope.launch {
                     if (detail.inLibrary) {
-                        withContext(Dispatchers.IO) { store.remove(project.id) }
+                        removeNovel(project)
                     } else {
                         withContext(Dispatchers.IO) { store.addOrReplace(project) }
                     }
@@ -312,9 +402,10 @@ fun MDReaderApp() {
                     )
                 }
             },
+            downloadedCount = { project -> vault.count(project) },
             onRemove = { project ->
                 scope.launch {
-                    withContext(Dispatchers.IO) { store.remove(project.id) }
+                    removeNovel(project)
                     projects = withContext(Dispatchers.IO) { store.load() }
                 }
             },

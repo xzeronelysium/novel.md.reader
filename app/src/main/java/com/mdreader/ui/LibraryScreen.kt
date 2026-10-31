@@ -104,6 +104,7 @@ fun LibraryScreen(
     snackbarHostState: SnackbarHostState,
     check: LibraryCheck,
     onCheckAll: () -> Unit,
+    downloadedCount: (Project) -> Int,
     onImport: () -> Unit,
     onOpenHit: (NovelHit) -> Unit,
     onOpen: (Project) -> Unit,
@@ -308,6 +309,7 @@ fun LibraryScreen(
     if (removalTarget != null) {
         RemoveDialog(
             project = removalTarget,
+            downloaded = downloadedCount(removalTarget),
             onDismiss = { pendingRemoval = null },
             onConfirm = {
                 onRemove(removalTarget)
@@ -622,8 +624,9 @@ private fun EmptyLibrary(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RemoveDialog(
+internal fun RemoveDialog(
     project: Project,
+    downloaded: Int = 0,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -647,7 +650,12 @@ private fun RemoveDialog(
                 Text(
                     text = "\"${project.name}\" will be removed from your library. " +
                         if (project.isOnline) {
-                            "Your reading progress for it is forgotten."
+                            "Your reading progress for it is forgotten." +
+                                if (downloaded > 0) {
+                                    " Its $downloaded downloaded chapters are deleted from this device."
+                                } else {
+                                    ""
+                                }
                         } else {
                             "The chapter files in the folder are not touched."
                         },

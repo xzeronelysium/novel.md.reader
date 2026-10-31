@@ -161,6 +161,23 @@ object MarkdownParser {
     private fun isBullet(trimmed: String): Boolean =
         trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")
 
+    /** Characters a backslash can protect, as in standard Markdown. */
+    const val ESCAPABLE = "\\`*_~#>-+.![](){}|<"
+
+    /** Index of [token] at or after [from], skipping any character a backslash protects. */
+    private fun indexOfUnescaped(input: String, token: String, from: Int): Int {
+        var i = from
+        while (i < input.length) {
+            if (input[i] == '\\' && i + 1 < input.length && input[i + 1] in ESCAPABLE) {
+                i += 2
+                continue
+            }
+            if (input.startsWith(token, i)) return i
+            i++
+        }
+        return -1
+    }
+
     fun parseInline(text: String): List<InlineSpan> {
         val spans = mutableListOf<InlineSpan>()
 
@@ -181,7 +198,7 @@ object MarkdownParser {
                 if (i + 1 < input.length) {
                     val pair = input.substring(i, i + 2)
                     if (pair == "**" || pair == "__" || pair == "~~") {
-                        val end = input.indexOf(pair, i + 2)
+                        val end = indexOfUnescaped(input, pair, i + 2)
                         if (end > i + 2) {
                             flush()
                             val inner = input.substring(i + 2, end)
@@ -197,6 +214,13 @@ object MarkdownParser {
 
                 val ch = input[i]
 
+                // A backslash before a Markdown character means the character itself.
+                if (ch == '\\' && i + 1 < input.length && input[i + 1] in ESCAPABLE) {
+                    buffer.append(input[i + 1])
+                    i += 2
+                    continue
+                }
+
                 if (ch == '`') {
                     val end = input.indexOf('`', i + 1)
                     if (end > i + 1) {
@@ -209,7 +233,7 @@ object MarkdownParser {
 
                 if (ch == '*' || ch == '_') {
                     val canOpen = ch != '_' || i == 0 || !input[i - 1].isLetterOrDigit()
-                    val end = if (canOpen) input.indexOf(ch, i + 1) else -1
+                    val end = if (canOpen) indexOfUnescaped(input, ch.toString(), i + 1) else -1
                     val canClose = end > i + 1 &&
                         input[end - 1] != ' ' &&
                         (ch != '_' || end + 1 >= input.length || !input[end + 1].isLetterOrDigit())
