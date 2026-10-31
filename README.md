@@ -17,7 +17,7 @@ and install it on your phone. Requires Android 8.0 or newer. The APK is a
 minified release build, under 1 MB.
 
 ```bash
-adb install -r novel.md.reader-v1.1.apk
+adb install -r novel.md.reader-v1.2.apk
 ```
 
 Or download it on the phone itself and open it, allowing installs from unknown
