@@ -192,9 +192,9 @@ fun AddNovelDock(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            if (hit.meta.isNotEmpty()) {
+                            if (hit.meta.isNotEmpty() || hit.rating.isNotEmpty()) {
                                 Spacer(Modifier.size(5.dp))
-                                Micro(text = hit.meta)
+                                HitMeta(rating = hit.rating, meta = hit.meta)
                             }
                         }
                         if (index < current.hits.lastIndex) Hairline()

@@ -14,6 +14,47 @@ import org.junit.Test
 /** Fixtures are trimmed copies of the markup the site served when this was written. */
 class FreeWebNovelParserTest {
 
+    private fun votePage(vote: String) = FreeWebNovelParser.parseNovelDetails(
+        """<div class="m-desc"><h1 class="tit">T</h1><div class="score"><p class="vote">$vote</p></div></div>"""
+    )
+
+    @Test
+    fun `novel page reads the score and vote count`() {
+        votePage("4.5 / 5 ( 491 votes )").let {
+            assertEquals("4.5", it.rating)
+            assertEquals(491, it.votes)
+        }
+        votePage("4 / 5 ( 1,940 votes )").let {
+            assertEquals("4.0", it.rating)
+            assertEquals(1940, it.votes)
+        }
+        assertEquals(1, votePage("5.0 / 5 ( 1 vote )").votes)
+    }
+
+    @Test
+    fun `no votes or a nonsense score shows no rating`() {
+        listOf(
+            "0.0 / 5 ( 0 votes )", "4.5 / 5 ( 0 votes )", "9.9 / 5 ( 12 votes )",
+            "NaN / 5 ( 3 votes )", "4.5 stars", "",
+        ).forEach {
+            val details = votePage(it)
+            assertEquals("expected no rating for '$it'", "", details.rating)
+            assertEquals(0, details.votes)
+        }
+        assertEquals("", FreeWebNovelParser.parseNovelDetails("""<div class="m-desc"><h1 class="tit">T</h1></div>""").rating)
+    }
+
+    @Test
+    fun `list rows carry the score when the site shows one`() {
+        fun row(core: String) = """<div class="col-content"><div class="ul-list1"><div class="li"><div class="txt">
+            <h3 class="tit"><a href="/novel/book">Book</a></h3>$core</div></div></div></div>"""
+        assertEquals("4.6", FreeWebNovelParser.parseSearch(row("""<div class="core"><span>4.6</span></div>""")).single().rating)
+        assertEquals("4.0", FreeWebNovelParser.parseSearch(row("""<div class="core"><span>4</span></div>""")).single().rating)
+        assertEquals("", FreeWebNovelParser.parseSearch(row("""<div class="core"><span>0.0</span></div>""")).single().rating)
+        assertEquals("", FreeWebNovelParser.parseSearch(row("""<div class="core"><span>lots</span></div>""")).single().rating)
+        assertEquals("", FreeWebNovelParser.parseSearch(row("")).single().rating)
+    }
+
     @Test
     fun `author links stay on site and author listing reads novels`() {
         fun details(link: String) = FreeWebNovelParser.parseNovelDetails(

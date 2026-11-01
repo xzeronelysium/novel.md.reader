@@ -23,6 +23,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.Locale
@@ -44,6 +46,30 @@ fun Micro(
         color = if (accent) MaterialTheme.colorScheme.primary else color,
         modifier = modifier,
     )
+}
+
+/** The site's score and vote count in one quiet line: `4.6 / 5 · 1,940 votes`, score in the accent. */
+@Composable
+fun RatingLine(rating: String, votes: Int) {
+    val count = if (votes == 1) "1 vote" else "%,d votes".format(votes)
+    Row(
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = "Rated $rating out of 5, $count"
+        },
+    ) {
+        Micro(text = rating, accent = true)
+        Micro(text = " / 5 · $count")
+    }
+}
+
+/** A search hit's line under its title: the score in the accent colour, then type and genres. */
+@Composable
+fun HitMeta(rating: String, meta: String) {
+    if (rating.isEmpty() && meta.isEmpty()) return
+    Row {
+        if (rating.isNotEmpty()) Micro(text = rating, accent = true)
+        if (meta.isNotEmpty()) Micro(text = if (rating.isEmpty()) meta else " · $meta")
+    }
 }
 
 @Composable

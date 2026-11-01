@@ -7,6 +7,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
+import java.util.Locale
 
 /** Why an online request did not produce usable content. */
 class OnlineException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -16,6 +17,8 @@ data class NovelHit(
     /** Site path, e.g. `/novel/cultivation-online-novel`. */
     val path: String,
     val meta: String,
+    /** The site's score out of 5 to one decimal (`"4.6"`), or empty when it shows none. */
+    val rating: String = "",
 )
 
 data class ChapterRef(val title: String, val path: String)
@@ -40,6 +43,9 @@ data class NovelDetails(
     /** Absolute same-site cover image URL, or empty when the page has none. */
     val cover: String = "",
     val authorPath: String = "",
+    /** The site's score out of 5 to one decimal, or empty when nobody has voted yet. */
+    val rating: String = "",
+    val votes: Int = 0,
 )
 
 /**
@@ -92,9 +98,18 @@ object FreeWebNovelParser {
                 ?.take(2)
                 ?.joinToString(" · ")
                 .orEmpty()
-            NovelHit(title = title, path = path, meta = meta)
+            val rating = formatScore(row?.selectFirst(".core span")?.text().orEmpty())
+            NovelHit(title = title, path = path, meta = meta, rating = rating)
         }
     }
+
+    /** A score the site shows as text, kept only when it is a real 0 to 5 value (0.0 means unrated). */
+    private fun formatScore(raw: String): String {
+        val value = raw.trim().takeIf { it.matches(Regex("\\d(\\.\\d+)?")) }?.toDoubleOrNull() ?: return ""
+        return if (value > 0.0 && value <= 5.0) String.format(Locale.ROOT, "%.1f", value) else ""
+    }
+
+    private val votePattern = Regex("(\\d(?:\\.\\d+)?)\\s*/\\s*5\\s*\\(\\s*([\\d,]+)\\s*votes?\\s*\\)", RegexOption.IGNORE_CASE)
 
     fun parseNovelDetails(html: String): NovelDetails {
         val doc = Jsoup.parse(html, ORIGIN)
@@ -106,6 +121,10 @@ object FreeWebNovelParser {
             .map { it.text().trim() }
             .filter { it.isNotEmpty() }
             .joinToString("\n\n")
+        // "4.0 / 5 ( 21 votes )": shown only when someone has voted and the numbers make sense.
+        val vote = votePattern.find(doc.selectFirst(".m-desc .score p.vote")?.text().orEmpty())
+        val votes = vote?.groupValues?.get(2)?.replace(",", "")?.toIntOrNull() ?: 0
+        val rating = if (votes > 0) formatScore(vote?.groupValues?.get(1).orEmpty()) else ""
         return NovelDetails(
             title = title,
             author = info?.selectFirst("a[href*=/author/]")?.text()?.trim().orEmpty(),
@@ -116,6 +135,8 @@ object FreeWebNovelParser {
             cover = coverUrl(doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()),
             authorPath = info?.selectFirst("a[href*=/author/]")?.attr("href")
                 ?.let(::sitePath)?.takeIf(::isAuthorPath).orEmpty(),
+            rating = rating,
+            votes = if (rating.isEmpty()) 0 else votes,
         )
     }
 

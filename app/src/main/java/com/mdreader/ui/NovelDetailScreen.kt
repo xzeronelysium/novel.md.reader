@@ -476,6 +476,20 @@ private fun Header(
                         )
                     }
                 }
+                if (details.rating.isNotEmpty()) {
+                    // The linked author already ends in 6 dp of padding; the plain one does not.
+                    Spacer(
+                        Modifier.height(
+                            when {
+                                details.author.isEmpty() -> 8.dp
+                                details.authorPath.isEmpty() -> 6.dp
+                                else -> 0.dp
+                            },
+                        ),
+                    )
+                    RatingLine(details.rating, details.votes)
+                }
+
             }
 
             if (details.genres.isNotEmpty()) {

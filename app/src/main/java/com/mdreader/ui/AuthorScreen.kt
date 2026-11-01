@@ -129,7 +129,7 @@ fun AuthorScreen(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (hit.meta.isNotEmpty()) Micro(text = hit.meta)
+                        HitMeta(rating = hit.rating, meta = hit.meta)
                     }
                 }
                 Hairline()
