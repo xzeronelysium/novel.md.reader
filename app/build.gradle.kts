@@ -14,8 +14,8 @@ android {
         applicationId = "com.mdreader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
         // AndroidX ships ~85 locales; keep only the ones the app could use.
         resourceConfigurations += listOf("en", "ja")
     }
