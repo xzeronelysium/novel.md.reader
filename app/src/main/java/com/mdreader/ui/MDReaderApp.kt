@@ -30,6 +30,7 @@ import com.mdreader.data.remapTo
 import com.mdreader.data.withChapters
 import com.mdreader.data.online.FreeWebNovelClient
 import com.mdreader.data.online.NovelDetails
+import com.mdreader.data.online.NovelHit
 import com.mdreader.data.online.OnlineException
 import com.mdreader.data.toChapters
 import kotlinx.coroutines.CancellationException
@@ -65,6 +66,11 @@ fun MDReaderApp() {
     var openProjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailPath by rememberSaveable { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf(NovelDetailState()) }
+    var detailJob by remember { mutableStateOf<Job?>(null) }
+    // The author list on screen, and the one a novel was opened from (Back from it returns there).
+    var authorPage by rememberSaveable { mutableStateOf<AuthorTrail?>(null) }
+    var cameFrom by rememberSaveable { mutableStateOf<AuthorTrail?>(null) }
+    val authorLists = remember { mutableMapOf<String, AuthorList>() }
     // A novel being read straight from the site without being in the library.
     var preview by remember { mutableStateOf<Project?>(null) }
     var previewStart by remember { mutableStateOf<Progress?>(null) }
@@ -206,8 +212,9 @@ fun MDReaderApp() {
     fun libraryEntry(path: String) = projects.firstOrNull { it.onlinePath == path }
 
     fun loadDetail(path: String, title: String?) {
+        detailJob?.cancel()
         detail = NovelDetailState(title = title)
-        scope.launch {
+        detailJob = scope.launch {
             try {
                 val saved = libraryEntry(path)
                 if (saved != null) {
@@ -308,10 +315,43 @@ fun MDReaderApp() {
         }
     }
 
-    if (openProject == null && detailPath != null) {
+    if (openProject == null && authorPage != null) {
+        val author = authorPage!!
+        AuthorScreen(
+            name = author.name,
+            path = author.path,
+            list = authorLists.getOrPut(author.path) { AuthorList() },
+            onBack = {
+                authorPage = null
+                // A novel opened from this list replaced the page we came from; bring that back.
+                val origin = author.origin
+                if (origin != null && origin != detailPath) {
+                    detailPath = origin
+                    loadDetail(origin, null)
+                }
+            },
+            onOpen = { hit: NovelHit ->
+                cameFrom = author
+                authorPage = null
+                detailPath = hit.path
+                loadDetail(hit.path, hit.title)
+            },
+        )
+    } else if (openProject == null && detailPath != null) {
         NovelDetailScreen(
             state = detail,
-            onBack = { detailPath = null },
+            onBack = {
+                detailJob?.cancel()
+                val from = cameFrom
+                cameFrom = null
+                if (from != null) authorPage = from else detailPath = null
+            },
+            onAuthor = {
+                val info = detail.details
+                if (info != null && info.authorPath.isNotEmpty()) {
+                    authorPage = AuthorTrail(info.author, info.authorPath, detailPath)
+                }
+            },
             onRetry = { detailPath?.let { loadDetail(it, detail.title) } },
             onRead = { index ->
                 val project = detail.project ?: return@NovelDetailScreen

@@ -14,6 +14,21 @@ import org.junit.Test
 /** Fixtures are trimmed copies of the markup the site served when this was written. */
 class FreeWebNovelParserTest {
 
+    @Test
+    fun `author links stay on site and author listing reads novels`() {
+        fun details(link: String) = FreeWebNovelParser.parseNovelDetails(
+            """<div class="m-desc"><h1 class="tit">T</h1></div><div class="m-imgtxt"><a href="$link">Writer</a></div>"""
+        )
+        assertEquals("/author/Writer+Name", details("/author/Writer+Name").authorPath)
+        assertEquals("", details("https://evil.example/author/Writer").authorPath)
+        assertEquals("", details("/author/../other").authorPath)
+        val html = """<div class="col-content"><div class="ul-list1"><div class="li"><div class="txt"><h3 class="tit"><a href="/novel/book">Book</a></h3></div></div></div></div><div class="pagination"><a href="/author/Writer?page=2">2</a></div>"""
+        val result = FreeWebNovelParser.parseAuthorPage(html, "/author/Writer", 1)
+        assertEquals(listOf("Book"), result.hits.map { it.title })
+        assertTrue(result.hasNext)
+        assertFalse(FreeWebNovelParser.parseAuthorPage(html, "/author/Other", 1).hasNext)
+    }
+
     private val searchHtml = """
         <div class="col-content"><div class="ul-list1"><div class="li-row"><div class="li"><div class="con">
           <div class="pic"><a href="/novel/cultivation-online-novel"><img src="/x.jpg"></a></div>

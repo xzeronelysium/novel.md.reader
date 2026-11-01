@@ -34,6 +34,12 @@ object FreeWebNovelClient {
         return FreeWebNovelParser.parseSearch(get("/search?keyword=$encoded&page=$page"))
     }
 
+    suspend fun loadAuthor(path: String, page: Int = 1): AuthorListing {
+        require(FreeWebNovelParser.isAuthorPath(path)) { "Not an author path" }
+        require(page > 0)
+        return FreeWebNovelParser.parseAuthorPage(get("$path?page=$page"), path, page)
+    }
+
     /** Just the novel page (summary, author, status): one request. */
     suspend fun loadNovelPage(path: String): NovelDetails {
         require(FreeWebNovelParser.isNovelPath(path)) { "Not a novel path: $path" }

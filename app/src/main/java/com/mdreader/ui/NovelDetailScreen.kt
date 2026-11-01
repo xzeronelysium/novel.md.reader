@@ -157,6 +157,7 @@ private const val LEADING_ITEMS = 2
 fun NovelDetailScreen(
     state: NovelDetailState,
     onBack: () -> Unit,
+    onAuthor: () -> Unit,
     onRetry: () -> Unit,
     onRead: (Int) -> Unit,
     onContinue: () -> Unit,
@@ -253,6 +254,7 @@ fun NovelDetailScreen(
                             inLibrary = state.inLibrary,
                             resumeIndex = state.resumeIndex,
                             onBack = onBack,
+                            onAuthor = onAuthor,
                             onRead = onRead,
                             onContinue = onContinue,
                             onToggleLibrary = onToggleLibrary,
@@ -315,7 +317,9 @@ fun NovelDetailScreen(
                                     text = chapter.number(index).toString(),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (current) scheme.primary else scheme.onSurfaceVariant,
-                                    modifier = Modifier.width(42.dp).padding(top = 4.dp),
+                                    // 48 dp puts titles on the title block's x; 9 dp centres the number
+                                    // on the first 32 sp title line.
+                                    modifier = Modifier.width(48.dp).padding(top = 9.dp),
                                 )
                                 Text(
                                     text = chapter.title,
@@ -348,7 +352,7 @@ fun NovelDetailScreen(
 }
 
 @Composable
-private fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
+internal fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .size(40.dp)
@@ -415,6 +419,7 @@ private fun Header(
     inLibrary: Boolean,
     resumeIndex: Int?,
     onBack: () -> Unit,
+    onAuthor: () -> Unit,
     onRead: (Int) -> Unit,
     onContinue: () -> Unit,
     onToggleLibrary: () -> Unit,
@@ -452,8 +457,24 @@ private fun Header(
         Column(modifier = Modifier.coverField(cover, FieldFade.Detail)) {
             TitleBlock(onBack = onBack, title = details.title) {
                 if (details.author.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Micro(text = details.author)
+                    if (details.authorPath.isEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Micro(text = details.author)
+                    } else {
+                        // Padded to a taller target, with the gap above reduced to match.
+                        Spacer(Modifier.height(2.dp))
+                        Micro(
+                            text = details.author,
+                            accent = true,
+                            modifier = Modifier
+                                .clickable(onClick = onAuthor)
+                                .padding(vertical = 6.dp)
+                                .semantics {
+                                    contentDescription = "Novels by ${details.author}"
+                                    role = Role.Button
+                                },
+                        )
+                    }
                 }
             }
 
@@ -1307,7 +1328,7 @@ private fun Stat(label: String, value: String, modifier: Modifier = Modifier, ac
  * sits 16dp after the glyph and the title 16dp after the rule.
  */
 @Composable
-private fun TitleBlock(
+internal fun TitleBlock(
     onBack: () -> Unit,
     title: String,
     below: @Composable () -> Unit,

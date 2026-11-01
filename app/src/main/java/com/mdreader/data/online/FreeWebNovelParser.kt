@@ -20,6 +20,8 @@ data class NovelHit(
 
 data class ChapterRef(val title: String, val path: String)
 
+data class AuthorListing(val hits: List<NovelHit>, val hasNext: Boolean)
+
 /** One server page of a novel's chapter list. */
 data class ChapterPage(
     val page: Int,
@@ -37,6 +39,7 @@ data class NovelDetails(
     val totalPages: Int,
     /** Absolute same-site cover image URL, or empty when the page has none. */
     val cover: String = "",
+    val authorPath: String = "",
 )
 
 /**
@@ -61,6 +64,8 @@ object FreeWebNovelParser {
     fun isNovelPath(path: String) = novelPath.matches(path)
 
     fun isChapterPath(path: String) = chapterPath.matches(path)
+
+    fun isAuthorPath(path: String) = Regex("^/author/(?:[A-Za-z0-9._~+,-]|%[0-9a-fA-F]{2})+$").matches(path) && ".." !in path
 
     /** Reduces a link to a site path if (and only if) it points at this site. */
     private fun sitePath(href: String): String? {
@@ -109,7 +114,21 @@ object FreeWebNovelParser {
             synopsis = synopsis,
             totalPages = options.coerceAtLeast(1),
             cover = coverUrl(doc.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()),
+            authorPath = info?.selectFirst("a[href*=/author/]")?.attr("href")
+                ?.let(::sitePath)?.takeIf(::isAuthorPath).orEmpty(),
         )
+    }
+
+    fun parseAuthorPage(html: String, authorPath: String, page: Int): AuthorListing {
+        val doc = Jsoup.parse(html, ORIGIN)
+        if (doc.selectFirst(".col-content .ul-list1") == null) {
+            throw OnlineException("The author page came back in an unexpected format.")
+        }
+        val hasNext = doc.select(".pagination a[href], .m-page a[href], .pagelink a[href]").any { link ->
+            val href = link.attr("href")
+            sitePath(href) == authorPath && Regex("(?:[?&])page=${page + 1}(?:[&#]|$)").containsMatchIn(href)
+        }
+        return AuthorListing(parseSearch(html), hasNext)
     }
 
     private val coverPath = Regex("^/files/[A-Za-z0-9._/~-]+\\.(jpg|jpeg|png|webp)$", RegexOption.IGNORE_CASE)
