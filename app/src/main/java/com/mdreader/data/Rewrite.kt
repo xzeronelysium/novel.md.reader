@@ -518,8 +518,8 @@ object RewriteClient {
                 connection.disconnect()
             }
         }
-        synchronized(effortCache) { effortCache[model] = levels }
-        return levels
+        // Levels that came with the model list outrank a probe that finished later.
+        return synchronized(effortCache) { effortCache.getOrPut(model) { levels } }
     }
 
     private val effortCache = mutableMapOf<String, List<String>>()

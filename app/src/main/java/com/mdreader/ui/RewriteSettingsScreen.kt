@@ -110,6 +110,13 @@ fun RewriteSettingsScreen(
         onChange(next)
     }
 
+    suspend fun effortsOf(current: RewriteSettings, id: String): List<String> =
+        if (current.isChatGpt) {
+            runCatching { RewriteClient.chatGptEfforts(current.chatgpt!!, id) }.getOrDefault(emptyList())
+        } else {
+            RewriteClient.efforts(current.baseUrl, current.apiKey, id)
+        }
+
     fun loadModels() {
         status = "Connecting"
         statusFailed = false
@@ -118,7 +125,12 @@ fun RewriteSettingsScreen(
             runCatching {
                 if (current.isChatGpt) RewriteClient.chatGptModels(current.chatgpt!!) else RewriteClient.models(current.baseUrl, current.apiKey)
             }.fold(
-                onSuccess = { models = it; status = "Connected · ${it.size} models" },
+                onSuccess = { list ->
+                    models = list
+                    status = "Connected · ${list.size} models"
+                    // ChatGPT's list carries each model's levels, so read them once it has arrived.
+                    if (settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
+                },
                 onFailure = {
                     statusFailed = true
                     status = it.message?.lineSequence()?.first()?.take(110) ?: "Couldn't connect"
@@ -126,13 +138,6 @@ fun RewriteSettingsScreen(
             )
         }
     }
-
-    suspend fun effortsOf(current: RewriteSettings, id: String): List<String> =
-        if (current.isChatGpt) {
-            runCatching { RewriteClient.chatGptEfforts(current.chatgpt!!, id) }.getOrDefault(emptyList())
-        } else {
-            RewriteClient.efforts(current.baseUrl, current.apiKey, id)
-        }
 
     fun pick(id: String) {
         update(settings.copy(model = id, effort = ""))
@@ -186,7 +191,7 @@ fun RewriteSettingsScreen(
     LaunchedEffect(Unit) {
         if (settings.signedIn) {
             loadModels()
-            if (settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
+            if (!settings.isChatGpt && settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
         }
     }
 
@@ -248,7 +253,8 @@ fun RewriteSettingsScreen(
                     },
                 ) {
                     if (models.size > 8) LineField(label = "Search", value = query, onChange = { query = it })
-                    Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    // A short list shows whole; only a long one scrolls inside the page.
+                    Column(if (models.size > 12) Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()) else Modifier) {
                         val shown = models.filter { it.contains(query.trim(), ignoreCase = true) }
                         shown.forEachIndexed { position, id ->
                             val selected = id == settings.model
@@ -535,35 +541,54 @@ private fun Fold(title: String, value: String, open: Boolean, onToggle: () -> Un
     }
 }
 
-/** Square segmented choice: the active segment filled in ink, the rest outlined. */
+/**
+ * Square segmented choice: the active segment filled in ink, the rest outlined. More than
+ * [perRow] options wrap into a grid of equal cells, so a long list of levels never squeezes its
+ * labels; a short last row is padded with empty cells to keep the columns aligned.
+ */
 @Composable
-private fun Segmented(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+private fun Segmented(
+    options: List<Pair<String, String>>,
+    selected: String,
+    perRow: Int = 4,
+    onSelect: (String) -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(IntrinsicSize.Min)
-            .border(1.dp, scheme.outline),
-    ) {
-        options.forEachIndexed { i, (value, label) ->
-            val on = value == selected
-            if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .background(if (on) scheme.onSurface else androidx.compose.ui.graphics.Color.Transparent)
-                    .clickable { onSelect(value) }
-                    .padding(vertical = 11.dp)
-                    .semantics { role = Role.RadioButton },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    label.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
-                    color = if (on) scheme.background else scheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
+    val rows = options.size.let { n -> (n + perRow - 1) / perRow }.coerceAtLeast(1)
+    // Fill the rows evenly: 7 options make rows of 4 and 3, not 4 and a lonely 3-wide gap.
+    val columns = (options.size + rows - 1) / rows
+    Column(Modifier.fillMaxWidth().border(1.dp, scheme.outline)) {
+        options.chunked(columns).forEachIndexed { r, row ->
+            if (r > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outline))
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                for (c in 0 until columns) {
+                    if (c > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
+                    val option = row.getOrNull(c)
+                    if (option == null) {
+                        Spacer(Modifier.weight(1f))
+                        continue
+                    }
+                    val (value, label) = option
+                    val on = value == selected
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(if (on) scheme.onSurface else androidx.compose.ui.graphics.Color.Transparent)
+                            .clickable { onSelect(value) }
+                            .padding(horizontal = 4.dp, vertical = 12.dp)
+                            .semantics { role = Role.RadioButton },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                            color = if (on) scheme.background else scheme.onSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                }
             }
         }
     }
