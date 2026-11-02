@@ -381,6 +381,7 @@ fun ReaderScreen(
                 }
             },
             onStop = { rewriteJob?.cancel() },
+            onRewriteAgain = { startRewrite() },
             onSettings = { showRewriteSettings = true },
         )
 
@@ -838,9 +839,12 @@ private fun RewriteTabs(
     onOriginal: () -> Unit,
     onRewritten: () -> Unit,
     onStop: () -> Unit,
+    onRewriteAgain: () -> Unit,
     onSettings: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    // Replacing a saved rewrite takes a second tap; the ask resets when the view changes.
+    var confirmAgain by remember(showRewrite, hasRewrite, rewriting) { mutableStateOf(false) }
     @Composable
     fun Tab(label: String, selected: Boolean, accent: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
         Box(
@@ -888,6 +892,40 @@ private fun RewriteTabs(
         Tab("⚙", false, false, true, Modifier.width(56.dp), onSettings)
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
+    if (!rewriting && showRewrite && hasRewrite) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (confirmAgain) "Replace this rewrite with a new one?" else "Rewritten version",
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                Modifier
+                    .height(36.dp)
+                    .clickable(enabled = canStart) {
+                        if (confirmAgain) {
+                            confirmAgain = false
+                            onRewriteAgain()
+                        } else {
+                            confirmAgain = true
+                        }
+                    }
+                    .padding(start = 12.dp)
+                    .semantics { role = Role.Button },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (confirmAgain) "TAP AGAIN TO REPLACE" else "REWRITE AGAIN",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (canStart) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
+                )
+            }
+        }
+    }
     if (rewriting) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
