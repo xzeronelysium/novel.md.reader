@@ -295,30 +295,10 @@ object ChatGptTokens {
     }
 }
 
-/** The ChatGPT models a rewrite can use, and the effort levels each one takes (from pi's catalog). */
+/** Which of the models OpenAI lists can write a chapter. */
 object ChatGptModels {
-    /** Used when the account's model list can't be read. Newest first. */
-    val FALLBACK = listOf(
-        "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra",
-        "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-4.1",
-    )
-
-    /** Text models only: chat, reasoning and codex families, never audio, image or embedding ones. */
+    /** Everything but the models that don't write text: audio, speech, images, embeddings, moderation. */
     fun isWritingModel(id: String): Boolean =
-        Regex("^(gpt-4\\.1|gpt-5|gpt-6|o3|o4)").containsMatchIn(id) &&
-            !Regex("audio|realtime|tts|transcribe|image|search|embedding|moderation|codex-mini").containsMatchIn(id)
-
-    fun efforts(id: String): List<String> = when {
-        id.startsWith("gpt-6-astra") || id.startsWith("gpt-6.1") -> listOf("low", "medium", "high", "xhigh", "max")
-        id.startsWith("gpt-6") || id.startsWith("gpt-5.6") -> listOf("none", "low", "medium", "high", "xhigh", "max")
-        id.endsWith("-pro") -> listOf("medium", "high", "xhigh")
-        Regex("^gpt-5\\.[2-5]").containsMatchIn(id) -> listOf("none", "low", "medium", "high", "xhigh")
-        id.startsWith("gpt-5.1") -> listOf("none", "low", "medium", "high")
-        id.startsWith("gpt-5") -> listOf("minimal", "low", "medium", "high")
-        id.startsWith("o3") || id.startsWith("o4") -> listOf("low", "medium", "high")
-        else -> emptyList()
-    }
-
-    /** Reasoning models refuse a temperature; only the older chat models take one. */
-    fun acceptsTemperature(id: String): Boolean = id.startsWith("gpt-4")
+        !Regex("audio|realtime|tts|transcribe|whisper|image|dall-e|sora|embedding|moderation|search|computer-use|babbage|davinci")
+            .containsMatchIn(id)
 }

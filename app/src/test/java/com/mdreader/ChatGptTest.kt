@@ -64,12 +64,12 @@ class ChatGptTest {
 
     @Test fun responsesRequestAndStream() {
         val settings = RewriteSettings(provider = RewriteSettings.CHATGPT, model = "gpt-5.5", effort = "high")
-        val body = JSONObject(RewriteClient.responsesBody(settings, "SYSTEM", "USER", 0.7))
+        val body = JSONObject(RewriteClient.responsesBody(settings, "SYSTEM", "USER", null))
         assertEquals("SYSTEM", body.getString("instructions"))
         assertEquals("USER", body.getJSONArray("input").getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text"))
         assertEquals("high", body.getJSONObject("reasoning").getString("effort"))
         assertEquals(false, body.has("temperature"))
-        assertEquals(true, JSONObject(RewriteClient.responsesBody(settings.copy(model = "gpt-4.1", effort = ""), "s", "u", 0.7)).has("temperature"))
+        assertEquals(true, JSONObject(RewriteClient.responsesBody(settings.copy(effort = ""), "s", "u", 0.7)).has("temperature"))
 
         assertEquals("Hi", RewriteClient.responsesDeltaOf("""data: {"type":"response.output_text.delta","delta":"Hi"}"""))
         assertNull(RewriteClient.responsesDeltaOf("""data: {"type":"response.created"}"""))
@@ -81,12 +81,21 @@ class ChatGptTest {
         )
     }
 
-    @Test fun effortLevelsFollowTheModel() {
-        assertEquals(listOf("none", "low", "medium", "high", "xhigh"), ChatGptModels.efforts("gpt-5.5"))
-        assertEquals(listOf("minimal", "low", "medium", "high"), ChatGptModels.efforts("gpt-5-mini"))
-        assertEquals(emptyList<String>(), ChatGptModels.efforts("gpt-4.1"))
+    @Test fun effortLevelsAreReadFromTheModelsOwnRefusal() {
+        val levels = """{"error":{"message":"Invalid value: 'probe'. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'.","type":"invalid_request_error","param":"reasoning.effort","code":"invalid_value"}}"""
+        assertEquals(listOf("none", "low", "medium", "high", "xhigh"), RewriteClient.supportedEfforts(levels))
+        val noReasoning = """{"error":{"message":"Unsupported parameter: 'reasoning.effort' is not supported with this model.","param":"reasoning.effort","code":"unsupported_parameter"}}"""
+        assertEquals(emptyList<String>(), RewriteClient.supportedEfforts(noReasoning))
+        val other = """{"error":{"message":"Supported values are: 'a'","param":"input"}}"""
+        assertEquals(emptyList<String>(), RewriteClient.supportedEfforts(other))
+        assertEquals("temperature", RewriteClient.errorParam("""{"error":{"param":"temperature"}}"""))
+    }
+
+    @Test fun onlyTextModelsAreOffered() {
         assertEquals(true, ChatGptModels.isWritingModel("gpt-5.4-mini"))
+        assertEquals(true, ChatGptModels.isWritingModel("gpt-7"))
         assertEquals(false, ChatGptModels.isWritingModel("gpt-4o-realtime-preview"))
+        assertEquals(false, ChatGptModels.isWritingModel("text-embedding-3-large"))
     }
 
     @Test fun signInIsSealedAndANewerGrantIsNeverUndone() {

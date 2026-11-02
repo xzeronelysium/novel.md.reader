@@ -52,7 +52,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mdreader.data.RewriteClient
-import com.mdreader.data.ChatGptModels
 import com.mdreader.data.ChatGptSignIn
 import com.mdreader.data.ChatGptTokens
 import com.mdreader.data.RewriteSettings
@@ -129,7 +128,11 @@ fun RewriteSettingsScreen(
     }
 
     suspend fun effortsOf(current: RewriteSettings, id: String): List<String> =
-        if (current.isChatGpt) ChatGptModels.efforts(id) else RewriteClient.efforts(current.baseUrl, current.apiKey, id)
+        if (current.isChatGpt) {
+            runCatching { RewriteClient.chatGptEfforts(current.chatgpt!!, id) }.getOrDefault(emptyList())
+        } else {
+            RewriteClient.efforts(current.baseUrl, current.apiKey, id)
+        }
 
     fun pick(id: String) {
         update(settings.copy(model = id, effort = ""))

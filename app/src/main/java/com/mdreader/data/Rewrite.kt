@@ -276,11 +276,33 @@ object RewriteClient {
         temperature: Double = EXACT,
     ): String = withContext(Dispatchers.IO) {
         require(settings.ready) { if (settings.isChatGpt) "Sign in with ChatGPT and choose a model first." else "Set the endpoint, key and model first." }
+        try {
+            send(settings, system, user, onProgress, temperature)
+        } catch (e: TemperatureRefused) {
+            // Learned from the answer, not from the model's name: next time it goes without.
+            synchronized(noTemperature) { noTemperature += settings.model }
+            send(settings, system, user, onProgress, null)
+        }
+    }
+
+    /** Models that answered "temperature is not supported"; asked again without one. */
+    private val noTemperature = mutableSetOf<String>()
+
+    private class TemperatureRefused : IOException("temperature not supported")
+
+    private suspend fun send(
+        settings: RewriteSettings,
+        system: String,
+        user: String,
+        onProgress: (Int) -> Unit,
+        requested: Double?,
+    ): String {
         val chatgpt = settings.isChatGpt
+        val temperature = requested?.takeUnless { chatgpt && synchronized(noTemperature) { settings.model in noTemperature } }
         val body = if (chatgpt) responsesBody(settings, system, user, temperature) else JSONObject()
             .put("model", settings.model)
             .put("stream", true)
-            .put("temperature", temperature)
+            .apply { temperature?.let { put("temperature", it) } }
             .apply { if (settings.effort.isNotBlank()) put("reasoning_effort", settings.effort) }
             .put(
                 "messages",
@@ -306,11 +328,14 @@ object RewriteClient {
         // A blocked read does not notice cancellation; closing the socket does.
         val job = currentCoroutineContext()[Job]
         val watcher = job?.invokeOnCompletion { connection.disconnect() }
-        try {
+        return try {
             connection.outputStream.use { it.write(body.toByteArray()) }
             val code = connection.responseCode
             if (code !in 200..299) {
                 val text = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (chatgpt && code == 400 && temperature != null &&
+                    (errorParam(text) == "temperature" || text.contains("'temperature'"))
+                ) throw TemperatureRefused()
                 if (chatgpt && code == 401) throw IOException("ChatGPT no longer accepts this sign-in. Sign in again in the settings.")
                 throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
             }
@@ -332,7 +357,7 @@ object RewriteClient {
     }
 
     /** A Responses API request: the system prompt as instructions, the rest as one user message. */
-    internal fun responsesBody(settings: RewriteSettings, system: String, user: String, temperature: Double): String =
+    internal fun responsesBody(settings: RewriteSettings, system: String, user: String, temperature: Double?): String =
         JSONObject()
             .put("model", settings.model)
             .put("stream", true)
@@ -345,7 +370,7 @@ object RewriteClient {
                         .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", user))),
                 ),
             )
-            .apply { if (ChatGptModels.acceptsTemperature(settings.model)) put("temperature", temperature) }
+            .apply { temperature?.let { put("temperature", it) } }
             .apply { if (settings.effort.isNotBlank()) put("reasoning", JSONObject().put("effort", settings.effort)) }
             .toString()
 
@@ -392,11 +417,66 @@ object RewriteClient {
         else -> listOf("The service answered $code.", errorMessage(body)).filter { it.isNotBlank() }.joinToString(" ")
     }
 
-    /** The models this ChatGPT account can write with: its own list when readable, else a known set. */
-    suspend fun chatGptModels(credential: ChatGptCredential): List<String> = runCatching {
-        val listed = models(ChatGptAuth.RESOURCE, ChatGptTokens.access(credential)).filter(ChatGptModels::isWritingModel)
-        listed.sortedDescending().ifEmpty { ChatGptModels.FALLBACK }
-    }.getOrDefault(ChatGptModels.FALLBACK)
+    /** The models this ChatGPT account can write with, as OpenAI lists them (`GET /v1/models`). */
+    suspend fun chatGptModels(credential: ChatGptCredential): List<String> =
+        models(ChatGptAuth.RESOURCE, ChatGptTokens.access(credential)).filter(ChatGptModels::isWritingModel).sortedDescending()
+
+    /**
+     * The effort levels a ChatGPT model takes. OpenAI's model list doesn't say, so this asks the
+     * model itself: a request with a level that doesn't exist is refused before anything is
+     * generated, and the refusal lists the levels it does take. A model with no levels refuses
+     * reasoning outright, which reads as none. Remembered per model for the session.
+     */
+    suspend fun chatGptEfforts(credential: ChatGptCredential, model: String): List<String> {
+        synchronized(effortCache) { effortCache[model] }?.let { return it }
+        val token = ChatGptTokens.access(credential)
+        val body = JSONObject()
+            .put("model", model)
+            .put("input", "Hi")
+            .put("store", false)
+            .put("max_output_tokens", 16)
+            .put("reasoning", JSONObject().put("effort", "probe"))
+            .toString()
+        val levels = withContext(Dispatchers.IO) {
+            val connection = (URL("${ChatGptAuth.RESOURCE}/responses").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = 30_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+            try {
+                connection.outputStream.use { it.write(body.toByteArray()) }
+                val code = connection.responseCode
+                if (code in 200..299) return@withContext emptyList<String>()
+                val text = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code != 400) throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
+                supportedEfforts(text)
+            } finally {
+                connection.disconnect()
+            }
+        }
+        synchronized(effortCache) { effortCache[model] = levels }
+        return levels
+    }
+
+    private val effortCache = mutableMapOf<String, List<String>>()
+
+    /** The levels a "reasoning.effort" refusal lists ("Supported values are: 'low', 'medium'..."); none otherwise. */
+    internal fun supportedEfforts(errorBody: String): List<String> {
+        val message = runCatching { JSONObject(errorBody).optJSONObject("error")?.optString("message") }.getOrNull().orEmpty()
+        val param = errorParam(errorBody)
+        if (param != null && !param.startsWith("reasoning")) return emptyList()
+        val listed = message.substringAfter("upported values are", "")
+        if (listed.isEmpty()) return emptyList()
+        return Regex("'([^']+)'").findAll(listed).map { it.groupValues[1] }.filter { it != "probe" }.distinct().toList()
+    }
+
+    /** The request field an OpenAI error is about, such as "temperature" or "reasoning.effort". */
+    internal fun errorParam(errorBody: String): String? =
+        runCatching { JSONObject(errorBody).optJSONObject("error")?.optString("param") }.getOrNull()?.takeIf { it.isNotBlank() }
 
     /** Model ids the endpoint offers (`GET /models`), sorted. */
     suspend fun models(baseUrl: String, apiKey: String): List<String> = withContext(Dispatchers.IO) {
