@@ -69,6 +69,24 @@ class LabActivity : ComponentActivity() {
         val parallel = intent.getIntExtra("parallel", 2).coerceIn(1, 6)
         val strength = intent.getStringExtra("strength")
 
+        // `--ez settings true` shows the rewrite settings with the saved values; changes go nowhere.
+        if (intent.getBooleanExtra("settings", false)) {
+            val saved = RewriteStore.of(this).settings()
+            setContent {
+                MDReaderTheme {
+                    com.mdreader.ui.RewriteSettingsScreen(
+                        initial = saved,
+                        memoryChapters = 12,
+                        earlierRead = List(40) { it >= 28 },
+                        onChange = {},
+                        onRebuildMemory = {},
+                        onBack = { finish() },
+                    )
+                }
+            }
+            return
+        }
+
         // `--es preview lab/<run>/<file>.md` draws a file with the reader's own renderer instead.
         intent.getStringExtra("preview")?.let { path ->
             val blocks = runCatching { MarkdownParser.parse(File(filesDir, path).readText(), markdown = true) }.getOrDefault(emptyList())

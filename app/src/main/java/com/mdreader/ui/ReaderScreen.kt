@@ -485,6 +485,10 @@ fun ReaderScreen(
         RewriteSettingsScreen(
             initial = remember { rewrites.settings() },
             memoryChapters = remember(showRewriteSettings) { rewrites.bible(project).built().size },
+            earlierRead = remember(showRewriteSettings, index) {
+                val built = rewrites.bible(project).built()
+                chapters.take(index).map { it.uri in built }
+            },
             // Sealing the key is Keystore work: keep it off the main thread.
             onChange = { next -> scope.launch(Dispatchers.IO) { rewrites.saveSettings(next) } },
             onRebuildMemory = { rewrites.bible(project).clear() },

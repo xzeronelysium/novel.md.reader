@@ -1,6 +1,7 @@
 package com.mdreader.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +11,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -52,14 +56,17 @@ import com.mdreader.data.RewriteSettings
 import kotlinx.coroutines.launch
 
 /**
- * Full-page rewrite settings, in the reader's own language: hairlines, small uppercase labels,
- * flat text choices with the active one in vermilion. Every change is saved at once, so leaving
- * the page is all it takes.
+ * Full-page rewrite settings, status first: a card says whether a rewrite can run and how much of
+ * this novel the memory has read, and each setting folds open below it. In the reader's own
+ * language: hairlines, small uppercase labels, square shapes, one vermilion accent. Every change is
+ * saved at once, so leaving the page is all it takes.
  */
 @Composable
 fun RewriteSettingsScreen(
     initial: RewriteSettings,
     memoryChapters: Int,
+    /** One entry per chapter before the open one: whether the memory has read it. */
+    earlierRead: List<Boolean>,
     onChange: (RewriteSettings) -> Unit,
     onRebuildMemory: () -> Unit,
     onBack: () -> Unit,
@@ -75,7 +82,21 @@ fun RewriteSettingsScreen(
     var picking by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var memory by remember { mutableIntStateOf(memoryChapters) }
+    var readSoFar by remember { mutableStateOf(earlierRead) }
     var confirmRebuild by remember { mutableStateOf(false) }
+    // What is unfinished opens by itself; the rest waits for a tap.
+    var open by remember {
+        mutableStateOf(
+            when {
+                initial.apiKey.isBlank() -> setOf("connection")
+                initial.model.isBlank() -> setOf("model")
+                else -> emptySet()
+            },
+        )
+    }
+    fun toggle(section: String) {
+        open = if (section in open) open - section else open + section
+    }
 
     fun update(next: RewriteSettings) {
         settings = next
@@ -149,19 +170,139 @@ fun RewriteSettingsScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = ScreenPad),
             ) {
-                Spacer(Modifier.height(30.dp))
-                Micro(text = "Ollama Cloud", accent = true)
-                Spacer(Modifier.height(8.dp))
-                Text("Settings", style = MaterialTheme.typography.headlineSmall, color = scheme.onSurface)
-                Text(
-                    "How a chapter is rewritten. Changes save as you make them.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp),
+                Spacer(Modifier.height(24.dp))
+                // The chapters the next rewrite's memory would read, and how many of them it already has.
+                val window = if (settings.memoryDepth <= 0) readSoFar else readSoFar.takeLast(settings.memoryDepth)
+                StatusCard(
+                    settings = settings,
+                    connection = status,
+                    connectionFailed = statusFailed,
+                    memoryRead = window.count { it },
+                    memoryTarget = window.size,
                 )
-                Spacer(Modifier.height(26.dp))
+                Spacer(Modifier.height(14.dp))
 
-                Section("01", "Connection") {
+                Fold(
+                    title = "Model and effort",
+                    value = settings.model.ifBlank { "Choose one" } + if (settings.effort.isNotBlank()) " · ${settings.effort}" else "",
+                    open = "model" in open,
+                    onToggle = {
+                        if ("model" !in open && models.isEmpty() && settings.apiKey.isNotBlank()) loadModels()
+                        toggle("model")
+                    },
+                ) {
+                    if (models.size > 8) LineField(label = "Search", value = query, onChange = { query = it })
+                    Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                        val shown = models.filter { it.contains(query.trim(), ignoreCase = true) }
+                        shown.forEachIndexed { position, id ->
+                            val selected = id == settings.model
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { pick(id) }
+                                    .height(48.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = (position + 1).toString().padStart(2, '0'),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.width(30.dp),
+                                )
+                                Text(
+                                    text = id,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (selected) scheme.primary else scheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            if (position < shown.lastIndex) Hairline()
+                        }
+                        if (shown.isEmpty()) {
+                            Micro(
+                                text = if (settings.apiKey.isBlank()) "Add the API key under Connection first" else "No model matches",
+                                modifier = Modifier.padding(vertical = 16.dp),
+                            )
+                        }
+                    }
+                    if (efforts.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        Micro(text = "Effort")
+                        Spacer(Modifier.height(8.dp))
+                        Segmented(
+                            options = listOf("" to "Default") + efforts.map { it to it.replaceFirstChar(Char::uppercase) },
+                            selected = settings.effort,
+                            onSelect = { update(settings.copy(effort = it)) },
+                        )
+                        Note("How long the model thinks before it writes. Only the levels this model supports.")
+                    } else if (settings.model.isNotBlank()) {
+                        Note("This model has no effort levels to choose from.")
+                    }
+                }
+
+                Fold(
+                    title = "Strength",
+                    value = settings.strength.replaceFirstChar(Char::uppercase),
+                    open = "strength" in open,
+                    onToggle = { toggle("strength") },
+                ) {
+                    Segmented(
+                        options = listOf("light" to "Light", "full" to "Full", "max" to "Max"),
+                        selected = settings.strength,
+                        onSelect = { update(settings.copy(strength = it)) },
+                    )
+                    Note(
+                        when (settings.strength) {
+                            "light" -> "Clean-up. 1.0 to 1.2 times the source length, at least."
+                            "max" -> "Deepest rewrite. 1.3 to 1.6 times the source length, at least."
+                            else -> "Full rewrite. 1.15 to 1.45 times the source length, at least."
+                        },
+                    )
+                }
+
+                Fold(
+                    title = "Memory",
+                    value = when (settings.memoryDepth) {
+                        0 -> "From chapter 1"
+                        else -> "Last ${settings.memoryDepth}"
+                    },
+                    open = "memory" in open,
+                    onToggle = { toggle("memory") },
+                ) {
+                    Segmented(
+                        options = listOf("20" to "Last 20", "100" to "Last 100", "0" to "All"),
+                        selected = settings.memoryDepth.toString(),
+                        onSelect = { update(settings.copy(memoryDepth = it.toInt())) },
+                    )
+                    Note(
+                        "People, places, world rules and the story so far, read from earlier chapters before a rewrite. " +
+                            "The first read takes one call per chapter; after that only new chapters.",
+                    )
+                    ValueRow(
+                        value = if (memory == 1) "1 chapter read" else "$memory chapters read",
+                        action = if (confirmRebuild) "Tap again to clear" else "Rebuild",
+                        enabled = memory > 0,
+                        muted = memory == 0,
+                    ) {
+                        if (confirmRebuild) {
+                            onRebuildMemory()
+                            memory = 0
+                            readSoFar = readSoFar.map { false }
+                            confirmRebuild = false
+                        } else {
+                            confirmRebuild = true
+                        }
+                    }
+                }
+
+                Fold(
+                    title = "Connection",
+                    value = "Ollama Cloud",
+                    open = "connection" in open,
+                    onToggle = { toggle("connection") },
+                ) {
                     LineField(
                         label = "Base URL",
                         value = settings.baseUrl,
@@ -176,157 +317,175 @@ fun RewriteSettingsScreen(
                         action = if (showKey) "Hide" else "Show",
                         onAction = { showKey = !showKey },
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "TEST CONNECTION",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (settings.apiKey.isBlank()) scheme.onSurfaceVariant.copy(alpha = 0.4f) else scheme.onSurface,
-                            modifier = Modifier
-                                .clickable(enabled = settings.apiKey.isNotBlank()) { loadModels() }
-                                .padding(vertical = 6.dp),
-                        )
-                        status?.let {
-                            Spacer(Modifier.width(14.dp))
-                            if (!statusFailed && it.startsWith("Connected")) SealDot()
-                            if (!statusFailed && it.startsWith("Connected")) Spacer(Modifier.width(7.dp))
-                            Micro(
-                                text = it,
-                                color = if (statusFailed) scheme.error else scheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
+                    OutlineAction(
+                        label = "Test connection",
+                        enabled = settings.apiKey.isNotBlank(),
+                        modifier = Modifier.padding(top = 16.dp),
+                    ) { loadModels() }
+                    Note("The key is sealed with the Android Keystore and only ever sent to this address.")
                 }
-
-                Section("02", "Model") {
-                    ValueRow(
-                        value = settings.model.ifBlank { "Choose a model" },
-                        action = if (picking) "Close" else "Change",
-                        enabled = models.isNotEmpty() || settings.apiKey.isNotBlank(),
-                        muted = settings.model.isBlank(),
-                    ) {
-                        if (models.isEmpty()) loadModels()
-                        picking = !picking
-                    }
-                    if (picking) {
-                        Spacer(Modifier.height(6.dp))
-                        LineField(label = "Search", value = query, onChange = { query = it })
-                        Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState())) {
-                            val shown = models.filter { it.contains(query.trim(), ignoreCase = true) }
-                            shown.forEachIndexed { position, id ->
-                                val selected = id == settings.model
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { pick(id) }
-                                        .height(50.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        text = (position + 1).toString().padStart(2, '0'),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (selected) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        modifier = Modifier.width(30.dp),
-                                    )
-                                    Text(
-                                        text = id,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (selected) scheme.primary else scheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                                if (position < shown.lastIndex) Hairline()
-                            }
-                            if (shown.isEmpty()) {
-                                Micro(text = "No model matches", modifier = Modifier.padding(vertical = 16.dp))
-                            }
-                        }
-                    }
-                }
-
-                if (efforts.isNotEmpty()) {
-                    Section("03", "Effort") {
-                        Choices(
-                            options = listOf("" to "Default") + efforts.map { it to it.replaceFirstChar(Char::uppercase) },
-                            selected = settings.effort,
-                            onSelect = { update(settings.copy(effort = it)) },
-                        )
-                        Note("How long the model thinks before it writes. Only the levels this model supports.")
-                    }
-                }
-
-                Section(if (efforts.isNotEmpty()) "04" else "03", "Strength") {
-                    Choices(
-                        options = listOf("light" to "Light", "full" to "Full", "max" to "Max"),
-                        selected = settings.strength,
-                        onSelect = { update(settings.copy(strength = it)) },
-                    )
-                    Note(
-                        when (settings.strength) {
-                            "light" -> "Clean-up. 1.0 to 1.2 times the source length, at least."
-                            "max" -> "Deepest rewrite. 1.3 to 1.6 times the source length, at least."
-                            else -> "Full rewrite. 1.15 to 1.45 times the source length, at least."
-                        },
-                    )
-                }
-
-                Section(if (efforts.isNotEmpty()) "05" else "04", "Memory", last = true) {
-                    ValueRow(
-                        value = if (memory == 1) "1 chapter read" else "$memory chapters read",
-                        action = if (confirmRebuild) "Tap again to clear" else "Rebuild",
-                        enabled = memory > 0,
-                        muted = memory == 0,
-                    ) {
-                        if (confirmRebuild) {
-                            onRebuildMemory()
-                            memory = 0
-                            confirmRebuild = false
-                        } else {
-                            confirmRebuild = true
-                        }
-                    }
-                    Choices(
-                        options = listOf("20" to "Last 20", "100" to "Last 100", "0" to "From chapter 1"),
-                        selected = settings.memoryDepth.toString(),
-                        onSelect = { update(settings.copy(memoryDepth = it.toInt())) },
-                    )
-                    Note(
-                        "People, places, world rules and the story so far, gathered from earlier chapters before a rewrite. " +
-                            "Reading from chapter 1 takes one call per chapter the first time, then only new chapters. " +
-                            "Rebuild clears this novel's memory; the next rewrite reads them again.",
-                    )
-                }
-                GridRule(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(40.dp))
             }
         }
     }
 }
 
-/** A numbered block: `01  CONNECTION`, a hairline, then its rows. */
+/**
+ * Whether a rewrite can run, and with what: a hairline box with a status line, the main choices,
+ * and a bar for how much of this novel's memory has been read.
+ */
 @Composable
-private fun Section(number: String, title: String, last: Boolean = false, content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
+private fun StatusCard(
+    settings: RewriteSettings,
+    connection: String?,
+    connectionFailed: Boolean,
+    memoryRead: Int,
+    memoryTarget: Int,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val (headline, ready) = when {
+        settings.apiKey.isBlank() -> "Add an API key to start" to false
+        connectionFailed -> (connection ?: "Couldn't connect") to false
+        settings.model.isBlank() -> "Choose a model" to false
+        else -> "Ready to rewrite" to true
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, scheme.outlineVariant)
+            .padding(16.dp),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = number,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.width(30.dp),
-            )
-            Micro(text = title, color = MaterialTheme.colorScheme.onSurface)
+            if (ready) {
+                SealDot()
+                Spacer(Modifier.width(8.dp))
+            }
+            Micro(text = headline, accent = ready, color = if (ready) scheme.primary else scheme.error)
         }
         Spacer(Modifier.height(10.dp))
+        StatusLine("Model", settings.model.ifBlank { "—" })
+        StatusLine("Strength", settings.strength.replaceFirstChar(Char::uppercase))
+        if (settings.effort.isNotBlank()) StatusLine("Effort", settings.effort.replaceFirstChar(Char::uppercase))
+        StatusLine(
+            "Memory · this novel",
+            if (memoryTarget == 0) "Nothing to read yet" else "$memoryRead of $memoryTarget chapters",
+        )
+        if (memoryTarget > 0) {
+            Spacer(Modifier.height(10.dp))
+            Box(Modifier.fillMaxWidth().height(2.dp).background(scheme.outlineVariant)) {
+                Box(
+                    Modifier
+                        .fillMaxWidth((memoryRead.toFloat() / memoryTarget).coerceIn(0f, 1f))
+                        .height(2.dp)
+                        .background(scheme.primary),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** A section that folds: its name and current value on a hairline row, its controls below when open. */
+@Composable
+private fun Fold(title: String, value: String, open: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .height(54.dp)
+                .semantics { role = Role.Button },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface, modifier = Modifier.weight(1f))
+            Text(
+                value,
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 170.dp),
+            )
+            Text(
+                if (open) "  –" else "  +",
+                style = MaterialTheme.typography.labelLarge,
+                color = scheme.primary,
+            )
+        }
+        if (open) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 18.dp)) { content() }
+        }
         Hairline()
-        Spacer(Modifier.height(8.dp))
-        content()
-        Spacer(Modifier.height(if (last) 28.dp else 30.dp))
+    }
+}
+
+/** Square segmented choice: the active segment filled in ink, the rest outlined. */
+@Composable
+private fun Segmented(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .border(1.dp, scheme.outline),
+    ) {
+        options.forEachIndexed { i, (value, label) ->
+            val on = value == selected
+            if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(if (on) scheme.onSurface else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { onSelect(value) }
+                    .padding(vertical = 11.dp)
+                    .semantics { role = Role.RadioButton },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    color = if (on) scheme.background else scheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** A flat, square outlined action, like the library's import button. */
+@Composable
+private fun OutlineAction(label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .border(1.dp, if (enabled) scheme.onSurface else scheme.outlineVariant)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 12.dp)
+            .semantics { role = Role.Button },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (enabled) scheme.onSurface else scheme.onSurfaceVariant.copy(alpha = 0.4f),
+        )
     }
 }
 
@@ -426,6 +585,6 @@ private fun Note(text: String) {
         text = text,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 2.dp),
+        modifier = Modifier.padding(top = 8.dp),
     )
 }
