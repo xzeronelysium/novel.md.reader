@@ -295,9 +295,60 @@ object ChatGptTokens {
     }
 }
 
-/** Which of the models OpenAI lists can write a chapter. */
+/** Where a ChatGPT sign-in's models are listed, and how to read the answer. */
 object ChatGptModels {
-    /** Everything but the models that don't write text: audio, speech, images, embeddings, moderation. */
+    /** Codex's version: the models endpoint hides models newer than the client asking. */
+    const val CLIENT_VERSION = "0.166.0"
+
+    data class Source(val url: String, val headers: Map<String, String> = emptyMap())
+
+    fun sources(token: String): List<Source> {
+        val account = accountId(token)
+        return listOf(
+            Source("${ChatGptAuth.RESOURCE}/models?client_version=$CLIENT_VERSION"),
+            Source(
+                "https://chatgpt.com/backend-api/codex/models?client_version=$CLIENT_VERSION",
+                buildMap {
+                    put("originator", "codex_cli_rs")
+                    account?.let { put("chatgpt-account-id", it) }
+                },
+            ),
+        )
+    }
+
+    /**
+     * Models in either format, as (id, effort levels). Codex's format names each model's levels
+     * (null when it doesn't say); hidden models and ones not usable through the API are left out.
+     */
+    fun parse(text: String): List<Pair<String, List<String>?>> {
+        val json = runCatching { JSONObject(text) }.getOrNull() ?: return emptyList()
+        json.optJSONArray("models")?.let { models ->
+            return (0 until models.length()).mapNotNull { models.optJSONObject(it) }
+                .filter { it.optString("visibility", "list") != "hide" && it.optBoolean("supported_in_api", true) }
+                .mapNotNull { model ->
+                    val slug = model.optString("slug").ifBlank { model.optString("id") }.ifBlank { return@mapNotNull null }
+                    val levels = model.optJSONArray("supported_reasoning_levels")?.let { array ->
+                        (0 until array.length()).mapNotNull { i ->
+                            array.optJSONObject(i)?.optString("effort")?.takeIf { it.isNotBlank() } ?: array.optString(i).takeIf { it.isNotBlank() }
+                        }
+                    }
+                    slug to levels
+                }
+        }
+        val data = json.optJSONArray("data") ?: return emptyList()
+        return (0 until data.length()).mapNotNull { data.optJSONObject(it)?.optString("id")?.takeIf(String::isNotBlank) }
+            .filter(::isWritingModel).sortedDescending().map { it to null }
+    }
+
+    /** The ChatGPT account id an access token carries, which ChatGPT's own endpoints ask for. */
+    fun accountId(token: String): String? = runCatching {
+        val payload = token.split('.')[1]
+        val json = JSONObject(String(java.util.Base64.getUrlDecoder().decode(payload.padEnd((payload.length + 3) / 4 * 4, '='))))
+        json.optJSONObject("https://api.openai.com/auth")?.optString("chatgpt_account_id")?.takeIf { it.isNotBlank() }
+            ?: json.optString("chatgpt_account_id").takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    /** In the classic list: everything but audio, speech, images, embeddings and moderation. */
     fun isWritingModel(id: String): Boolean =
         !Regex("audio|realtime|tts|transcribe|whisper|image|dall-e|sora|embedding|moderation|search|computer-use|babbage|davinci")
             .containsMatchIn(id)

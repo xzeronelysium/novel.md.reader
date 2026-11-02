@@ -334,8 +334,9 @@ object RewriteClient {
             if (code !in 200..299) {
                 val text = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
                 if (chatgpt && code == 400 && temperature != null &&
-                    (errorParam(text) == "temperature" || text.contains("'temperature'"))
+                    (errorParam(text) == "temperature" || errorMessage(text).contains("temperature", ignoreCase = true))
                 ) throw TemperatureRefused()
+                if (chatgpt) android.util.Log.w("MDReaderRewrite", "ChatGPT answered $code: ${text.take(600)}")
                 if (chatgpt && code == 401) throw IOException("ChatGPT no longer accepts this sign-in. Sign in again in the settings.")
                 throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
             }
@@ -417,9 +418,68 @@ object RewriteClient {
         else -> listOf("The service answered $code.", errorMessage(body)).filter { it.isNotBlank() }.joinToString(" ")
     }
 
-    /** The models this ChatGPT account can write with, as OpenAI lists them (`GET /v1/models`). */
-    suspend fun chatGptModels(credential: ChatGptCredential): List<String> =
-        models(ChatGptAuth.RESOURCE, ChatGptTokens.access(credential)).filter(ChatGptModels::isWritingModel).sortedDescending()
+    /**
+     * The models this ChatGPT account can write with, fetched the way Codex fetches them: a models
+     * endpoint that answers `{"models": [{"slug", "visibility", "supported_reasoning_levels"}]}`
+     * (or the classic `{"data": [{"id"}]}`), asked for with a `client_version` so newer models are
+     * not hidden. Each model's effort levels come with it. Tries OpenAI's API, then ChatGPT's own
+     * Codex endpoint; the first that lists anything wins, and if none does the last error is shown.
+     */
+    suspend fun chatGptModels(credential: ChatGptCredential): List<String> {
+        val token = ChatGptTokens.access(credential)
+        // The first source's error is the one worth showing; the fallback refusing too adds nothing.
+        var firstError: Exception? = null
+        for (source in ChatGptModels.sources(token)) {
+            try {
+                val text = withContext(Dispatchers.IO) { get(source.url, token, source.headers) }
+                val listed = ChatGptModels.parse(text)
+                if (listed.isEmpty()) continue
+                synchronized(effortCache) { listed.forEach { (slug, levels) -> if (levels != null) effortCache[slug] = levels } }
+                return listed.map { it.first }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (firstError == null) firstError = e
+            }
+        }
+        throw firstError ?: IOException("ChatGPT listed no models for this account.")
+    }
+
+    /** What each ChatGPT model source answers, for the debug lab: status and model count, never the token. */
+    suspend fun chatGptModelReport(credential: ChatGptCredential): List<String> {
+        val token = ChatGptTokens.access(credential)
+        return ChatGptModels.sources(token).map { source ->
+            runCatching { withContext(Dispatchers.IO) { get(source.url, token, source.headers) } }.fold(
+                onSuccess = { text ->
+                    val listed = ChatGptModels.parse(text)
+                    "${source.url} → OK, ${listed.size} models: " + listed.joinToString { (slug, levels) -> "$slug${levels?.let { " $it" }.orEmpty()}" } +
+                        if (listed.isEmpty()) " | body: " + text.take(300) else ""
+                },
+                onFailure = { "${source.url} → ${it.message}" },
+            )
+        }
+    }
+
+    /** A GET with a bearer token and extra headers; throws the short failure message on non-2xx. */
+    private fun get(url: String, token: String, headers: Map<String, String>): String {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = 30_000
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("User-Agent", USER_AGENT)
+            setRequestProperty("Accept", "application/json")
+            headers.forEach { (k, v) -> setRequestProperty(k, v) }
+        }
+        try {
+            val code = connection.responseCode
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
+            return text
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     /**
      * The effort levels a ChatGPT model takes. OpenAI's model list doesn't say, so this asks the
@@ -466,7 +526,7 @@ object RewriteClient {
 
     /** The levels a "reasoning.effort" refusal lists ("Supported values are: 'low', 'medium'..."); none otherwise. */
     internal fun supportedEfforts(errorBody: String): List<String> {
-        val message = runCatching { JSONObject(errorBody).optJSONObject("error")?.optString("message") }.getOrNull().orEmpty()
+        val message = errorMessage(errorBody)
         val param = errorParam(errorBody)
         if (param != null && !param.startsWith("reasoning")) return emptyList()
         val listed = message.substringAfter("upported values are", "")
@@ -524,11 +584,16 @@ object RewriteClient {
         }
     }
 
-    /** The JSON error's message, or nothing: a body that isn't JSON (an HTML page) is never shown. */
+    /**
+     * The JSON error's message, or nothing: a body that isn't JSON (an HTML page) is never shown.
+     * OpenAI says it as `{"error": {"message"}}`; its ChatGPT route as `{"detail": "..."}`.
+     */
     private fun errorMessage(text: String): String =
-        runCatching { JSONObject(text).optJSONObject("error")?.optString("message") }.getOrNull()
-            ?.takeIf { it.isNotBlank() }?.take(160)
-            .orEmpty()
+        runCatching {
+            val json = JSONObject(text)
+            json.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
+                ?: json.optString("detail").takeIf { it.isNotBlank() }
+        }.getOrNull()?.take(160).orEmpty()
 }
 
 /** Cheap, model-free checks of a rewrite against its source; their findings drive the repair. */

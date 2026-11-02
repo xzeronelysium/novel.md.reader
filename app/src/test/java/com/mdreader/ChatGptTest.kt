@@ -89,6 +89,24 @@ class ChatGptTest {
         val other = """{"error":{"message":"Supported values are: 'a'","param":"input"}}"""
         assertEquals(emptyList<String>(), RewriteClient.supportedEfforts(other))
         assertEquals("temperature", RewriteClient.errorParam("""{"error":{"param":"temperature"}}"""))
+        // The ChatGPT route answers in its own shape; the message still reaches the screen.
+        assertEquals("The service answered 400. Unsupported parameter: temperature", RewriteClient.failure(400, null, """{"detail":"Unsupported parameter: temperature"}"""))
+    }
+
+    @Test fun modelsAreReadInCodexsFormatWithTheirEffortLevels() {
+        val codex = """{"models":[{"slug":"gpt-6-luna","visibility":"list","supported_in_api":true,"supported_reasoning_levels":[{"effort":"low"},{"effort":"max"}]},
+            {"slug":"gpt-reserve","visibility":"hide","supported_in_api":true},{"slug":"web-only","visibility":"list","supported_in_api":false}]}"""
+        assertEquals(listOf("gpt-6-luna" to listOf("low", "max")), ChatGptModels.parse(codex))
+        val classic = """{"data":[{"id":"gpt-5.5"},{"id":"text-embedding-3-small"}]}"""
+        assertEquals(listOf("gpt-5.5" to null), ChatGptModels.parse(classic))
+        assertEquals(emptyList<Pair<String, List<String>?>>(), ChatGptModels.parse("<html>"))
+    }
+
+    @Test fun accountIdIsReadFromTheToken() {
+        val payload = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("""{"https://api.openai.com/auth":{"chatgpt_account_id":"acc-1"}}""".toByteArray())
+        assertEquals("acc-1", ChatGptModels.accountId("x.$payload.y"))
+        assertNull(ChatGptModels.accountId("not-a-jwt"))
     }
 
     @Test fun onlyTextModelsAreOffered() {
