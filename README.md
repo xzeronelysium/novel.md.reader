@@ -24,3 +24,32 @@ Or download it on the phone itself and open it, allowing installs from unknown
 sources when Android asks. If you'd rather build it, run
 `./gradlew :app:assembleRelease` and check `PLAN.md` for how the whole thing
 fits together.
+
+## Rewrite
+
+Under the chapter rail, **ORIGINAL | REWRITE | ⚙** rewrites the open chapter
+with a model on Ollama Cloud (base URL and API key in ⚙; the key is sealed with
+the Android Keystore). The same events, better told: every beat, name and number
+kept, with texture, staging and sharper dialogue added. The original is never
+touched, and one tap flips between the two.
+
+A rewrite is one fixed script, no agent loop:
+
+1. **Memory.** Earlier chapters (the last 20, the last 100, or all of them) are
+   downloaded if needed and read into a small wiki per novel: people (state,
+   voice, aliases), places, world rules, open threads and the story so far.
+2. **Plan.** The model maps the chapter's beats and their causes, and splits it
+   into scenes, each with a type, a mood to amplify and details to add.
+3. **Write.** Each scene is written on its own, then checked in code (length,
+   beats, numbers, banned words, repeated descriptions, invented names). A
+   failing scene gets one repair with the exact reasons.
+4. **Record.** What the chapter establishes goes back into the memory.
+
+Everything stays in app-private storage under `rewrites/<novel>/`. The prompts
+are in `data/RewritePrompts.kt`; system screens, chat logs, letters and scene
+breaks each have a fixed Markdown form that the reader draws in its own way.
+
+Debug builds include a prompt lab for measuring prompt changes on real
+chapters: `tools/lab/lab.py start <run>` rewrites a fixed test set on the phone,
+and `tools/lab/lab.py pull <run>` scores it and writes a side-by-side report to
+`~/mdreader-lab`.

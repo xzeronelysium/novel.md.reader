@@ -203,6 +203,7 @@ fun MDReaderApp() {
         withContext(Dispatchers.IO) {
             store.remove(project.id)
             vault.deleteAll(project)
+            com.mdreader.data.RewriteStore.of(context.applicationContext).deleteAll(project)
         }
         vaultTick++
     }

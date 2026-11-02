@@ -95,11 +95,18 @@ class MarkdownRoundTripTest {
     }
 
     @Test
+    fun `a span that is only whitespace is written as is`() {
+        val text = MarkdownWriter.write(listOf(para(InlineSpan("Hi"), InlineSpan(" ", italic = true), InlineSpan("there"))))
+        assertEquals("Hi there\n", text)
+    }
+
+    @Test
     fun `other block kinds survive`() {
         val blocks = listOf(
             Block.Heading(1, "Chapter 1 - Cultivation Online"),
             plain("Text."),
             Block.Quote(listOf(InlineSpan("A quote"))),
+            Block.Quote(listOf(InlineSpan("Line one", bold = true), InlineSpan("\n"), InlineSpan("\n"), InlineSpan("Line two", bold = true))),
             Block.Bullet(listOf(InlineSpan("An item"))),
             Block.Numbered("3", listOf(InlineSpan("Third"))),
             Block.Rule,

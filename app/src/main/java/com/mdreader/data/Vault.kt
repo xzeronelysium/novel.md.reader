@@ -76,11 +76,15 @@ class Vault(private val root: File) {
         val dir = folder(project).apply { mkdirs() }
         val source = project.onlinePath?.let { FreeWebNovelParser.ORIGIN + it }.orEmpty()
         fun quoted(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        // A download that doesn't know the author (one started by a rewrite) keeps the one on file.
+        val keptAuthor = if (author.isNullOrBlank()) {
+            File(dir, INFO).takeIf { it.isFile }?.readLines()?.firstOrNull { it.startsWith("author: ") }
+        } else null
         File(dir, INFO).writeText(
             buildString {
                 appendLine("---")
                 appendLine("title: ${quoted(project.name)}")
-                if (!author.isNullOrBlank()) appendLine("author: ${quoted(author)}")
+                if (!author.isNullOrBlank()) appendLine("author: ${quoted(author)}") else keptAuthor?.let(::appendLine)
                 if (source.isNotEmpty()) appendLine("source: ${quoted(source)}")
                 appendLine("chapters: ${project.totalChapters ?: project.chapters.size}")
                 appendLine("updated: $now")

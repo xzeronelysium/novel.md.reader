@@ -3,6 +3,8 @@ package com.mdreader
 import com.mdreader.md.Block
 import com.mdreader.md.InlineSpan
 import com.mdreader.md.MarkdownParser
+import com.mdreader.md.chatMessages
+import com.mdreader.md.isSystemDisplay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -139,5 +141,38 @@ class MarkdownParserTest {
     @Test
     fun `blank source produces no blocks`() {
         assertEquals(emptyList<Block>(), MarkdownParser.parse("   \n\n", markdown = true))
+    }
+
+    @Test
+    fun `consecutive quote lines are one block and a blank line ends it`() {
+        val blocks = MarkdownParser.parse("> **[Name: Sunless]**\n>\n> **[Rank: Dormant]**\n\n> Another note", markdown = true)
+        assertEquals(2, blocks.size)
+        val panel = blocks[0] as Block.Quote
+        assertEquals("[Name: Sunless]\n\n[Rank: Dormant]", panel.spans.joinToString("") { it.text })
+    }
+
+    @Test
+    fun `system displays are recognised`() {
+        fun first(md: String) = MarkdownParser.parse(md, markdown = true).first()
+        assertEquals(true, first("> **[You have slain a beast.]**").isSystemDisplay())
+        assertEquals(true, first("\\[You have slain a beast.\\]").isSystemDisplay())
+        assertEquals(true, first("> **Name: Sunless**").isSystemDisplay())
+        assertEquals(false, first("> A letter from home.").isSystemDisplay())
+        assertEquals(false, first("He said [quietly] nothing.").isSystemDisplay())
+    }
+
+    @Test
+    fun `chat logs are read as messages`() {
+        val log = MarkdownParser.parse("> **Fang Yun:** “Heh.”\n> **Wang Ping:** “Why?”\n> Group members: 7/67.", markdown = true).first()
+        val messages = log.chatMessages()!!
+        assertEquals(listOf("Fang Yun", "Wang Ping", null), messages.map { it.sender })
+        assertEquals("“Heh.”", messages[0].spans.joinToString("") { it.text })
+
+        val scraped = MarkdownParser.parse("Liu Mei: \"Hehe, of course not.\"", markdown = true).first()
+        assertEquals("Liu Mei", scraped.chatMessages()!!.single().sender)
+
+        assertEquals(null, MarkdownParser.parse("> A letter from home.", markdown = true).first().chatMessages())
+        assertEquals(null, MarkdownParser.parse("He said: \"no\".", markdown = true).first().chatMessages())
+        assertEquals(null, MarkdownParser.parse("> **[Name: Sunless]**", markdown = true).first().chatMessages())
     }
 }

@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -57,16 +58,23 @@ import androidx.compose.ui.unit.sp
 import com.mdreader.data.Chapter
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
+import com.mdreader.data.RewriteClient
+import com.mdreader.data.RewritePipeline
+import com.mdreader.data.RewriteStore
 import com.mdreader.data.Project
+import com.mdreader.data.downloadChapters
+import com.mdreader.data.number
 import com.mdreader.data.Vault
 import com.mdreader.data.online.FreeWebNovelClient
 import com.mdreader.data.online.OnlineException
 import com.mdreader.data.remapTo
 import com.mdreader.md.Block
 import com.mdreader.md.MarkdownParser
+import com.mdreader.md.MarkdownWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(FlowPreview::class)
@@ -95,6 +103,17 @@ fun ReaderScreen(
     var loading by remember(project.id) { mutableStateOf(true) }
     var loadError by remember(project.id) { mutableStateOf<String?>(null) }
     var showChapters by remember { mutableStateOf(false) }
+    val rewrites = remember { RewriteStore.of(context.applicationContext) }
+    val scope = rememberCoroutineScope()
+    // The saved rewrite of the open chapter, and whether it is the one on screen.
+    var rewriteBlocks by remember(project.id) { mutableStateOf<List<Block>?>(null) }
+    var showRewrite by remember(project.id) { mutableStateOf(false) }
+    var rewriting by remember(project.id) { mutableStateOf(false) }
+    var rewriteError by remember(project.id) { mutableStateOf<String?>(null) }
+    var rewriteChars by remember(project.id) { mutableIntStateOf(0) }
+    var rewriteStatus by remember(project.id) { mutableStateOf<String?>(null) }
+    var rewriteJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var showRewriteSettings by remember { mutableStateOf(false) }
     var pendingRestore by remember(project.id) { mutableStateOf(startProgress) }
     var attempt by remember(project.id) { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -166,6 +185,111 @@ fun ReaderScreen(
         loading = false
     }
 
+    LaunchedEffect(project.id, index) {
+        showRewrite = false
+        rewriteError = null
+        val chapter = chapters.getOrNull(index)
+        rewriteBlocks = chapter?.let {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    rewrites.read(project, it)?.let { saved ->
+                        MarkdownParser.parse(saved.chapter, markdown = true).withoutOpeningTitle(it.title)
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+
+    fun startRewrite() {
+        val chapter = chapters.getOrNull(index) ?: return
+        val settings = rewrites.settings()
+        if (!settings.ready) {
+            showRewriteSettings = true
+            return
+        }
+        val source = blocks
+        if (source.isEmpty() || rewriting) return
+        rewriting = true
+        rewriteError = null
+        rewriteChars = 0
+        val previousNote = chapters.getOrNull(index - 1)?.let { rewrites.read(project, it)?.note }?.let(RewriteClient::carryNote)
+        rewriteJob = scope.launch {
+            try {
+                val bible = rewrites.bible(project)
+                // Cold start: read the earlier chapters into the sheets before rewriting this one.
+                val builtSoFar = bible.built()
+                // Fetch the earlier chapters the memory needs but the vault doesn't have yet.
+                // How far back the memory reads: the last N chapters, or every chapter from the first.
+                val firstToRead = if (settings.memoryDepth <= 0) 0 else maxOf(0, index - settings.memoryDepth)
+                if (chapter.remote) {
+                    val missing = (firstToRead until index).filter {
+                        chapters[it].uri !in builtSoFar && !vault.has(project, chapters[it])
+                    }
+                    if (missing.isNotEmpty()) {
+                        val result = withContext(Dispatchers.IO) {
+                            downloadChapters(project, missing, vault, null, java.time.LocalDate.now().toString()) {
+                                rewriteStatus = "DOWNLOAD ${it.done}/${it.total}"
+                            }
+                        }
+                        if (result.failed > 0 && result.message?.startsWith("Paused") == true) {
+                            throw java.io.IOException(result.message)
+                        }
+                    }
+                }
+                val todo = (firstToRead until index).mapNotNull { i ->
+                    val c = chapters[i]
+                    if (c.uri in builtSoFar) return@mapNotNull null
+                    val text = withContext(Dispatchers.IO) {
+                        runCatching {
+                            if (c.remote) vault.read(project, c) else ChapterSource.read(context, Uri.parse(c.uri))
+                        }.getOrNull()
+                    }
+                    text?.let { Triple(i, c, it) }
+                }
+                todo.forEachIndexed { n, (i, c, text) ->
+                    rewriteStatus = "SHEETS ${n + 1}/${todo.size}"
+                    val updates = RewriteClient.buildSheets(settings, c.number(i), c.title, text) { rewriteChars = it }
+                    withContext(Dispatchers.IO) { bible.merge(updates); bible.markBuilt(c.uri) }
+                }
+                rewriteStatus = null
+                rewriteChars = 0
+                val md = MarkdownWriter.write(source)
+                val previousTail = chapters.getOrNull(index - 1)?.let { c ->
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            if (c.remote) vault.read(project, c) else ChapterSource.read(context, Uri.parse(c.uri))
+                        }.getOrNull()
+                    }?.let { RewriteClient.tailWords(it) }
+                }
+                val result = RewritePipeline.rewrite(
+                    settings, chapter.number(index), chapter.title, md, previousNote,
+                    withContext(Dispatchers.IO) { bible.context(md) },
+                    previousTail,
+                    onStage = { rewriteStatus = it },
+                ) { rewriteChars = it }
+                withContext(Dispatchers.IO) {
+                    rewrites.write(project, chapter, result)
+                    bible.merge(result.sheets)
+                    bible.markBuilt(chapter.uri)
+                }
+                val parsed = MarkdownParser.parse(result.chapter, markdown = true).withoutOpeningTitle(chapter.title)
+                // The reader may have moved on while the answer was coming back.
+                if (chapters.getOrNull(index) == chapter) {
+                    rewriteBlocks = parsed
+                    showRewrite = true
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                rewriteError = e.message ?: e.javaClass.simpleName
+            } finally {
+                rewriting = false
+                rewriteStatus = null
+                rewriteJob = null
+            }
+        }
+    }
+
     // Restore the saved scroll position once per visit, otherwise start at the top.
     LaunchedEffect(blocks) {
         if (blocks.isEmpty()) return@LaunchedEffect
@@ -229,6 +353,36 @@ fun ReaderScreen(
             currentIndex = index,
             chapterCount = total,
         )
+        RewriteTabs(
+            showRewrite = showRewrite,
+            hasRewrite = rewriteBlocks != null,
+            rewriting = rewriting,
+            words = rewriteChars / 6,
+            status = rewriteStatus,
+            canStart = !loading && loadError == null && blocks.isNotEmpty(),
+            onOriginal = {
+                // Back to the original also puts away a failed rewrite's message.
+                rewriteError = null
+                if (showRewrite) {
+                    showRewrite = false
+                    scope.launch { listState.scrollToItem(0) }
+                }
+            },
+            onRewritten = {
+                when {
+                    rewriting -> Unit
+                    rewriteBlocks != null -> {
+                        if (!showRewrite) {
+                            showRewrite = true
+                            scope.launch { listState.scrollToItem(0) }
+                        }
+                    }
+                    else -> startRewrite()
+                }
+            },
+            onStop = { rewriteJob?.cancel() },
+            onSettings = { showRewriteSettings = true },
+        )
 
         Box(
             modifier = Modifier
@@ -238,6 +392,14 @@ fun ReaderScreen(
             val message = loadError
             val chapter = chapters.getOrNull(index)
             when {
+                rewriteError != null -> ReaderMessage(
+                    label = "Rewrite",
+                    title = "The rewrite failed",
+                    body = rewriteError.orEmpty(),
+                    actionLabel = "Try again",
+                    onAction = { startRewrite() },
+                )
+
                 message != null -> ReaderMessage(
                     label = "Error",
                     title = "Couldn't open this chapter",
@@ -298,7 +460,7 @@ fun ReaderScreen(
                                     total = total,
                                 )
                             }
-                            items(blocks) { block ->
+                            items(if (showRewrite) rewriteBlocks ?: blocks else blocks) { block ->
                                 BlockView(block)
                             }
                         }
@@ -316,6 +478,17 @@ fun ReaderScreen(
                 onNext = { goTo(index + 1) },
             )
         }
+    }
+
+    if (showRewriteSettings) {
+        RewriteSettingsScreen(
+            initial = remember { rewrites.settings() },
+            memoryChapters = remember(showRewriteSettings) { rewrites.bible(project).built().size },
+            // Sealing the key is Keystore work: keep it off the main thread.
+            onChange = { next -> scope.launch(Dispatchers.IO) { rewrites.saveSettings(next) } },
+            onRebuildMemory = { rewrites.bible(project).clear() },
+            onBack = { showRewriteSettings = false },
+        )
     }
 
     if (showChapters) {
@@ -651,3 +824,85 @@ private fun List<Block>.withoutOpeningTitle(title: String): List<Block> {
 
 private fun normalizeHeading(value: String): String =
     value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+
+
+/** ORIGINAL | REWRITTEN tabs under the chapter rail; the gear opens the rewrite settings. */
+@Composable
+private fun RewriteTabs(
+    showRewrite: Boolean,
+    hasRewrite: Boolean,
+    rewriting: Boolean,
+    words: Int,
+    status: String?,
+    canStart: Boolean,
+    onOriginal: () -> Unit,
+    onRewritten: () -> Unit,
+    onStop: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    @Composable
+    fun Tab(label: String, selected: Boolean, accent: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+        Box(
+            modifier = modifier
+                .height(40.dp)
+                .clickable(enabled = enabled, onClick = onClick)
+                .semantics { role = Role.Tab },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = when {
+                    !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    accent -> scheme.primary
+                    selected -> scheme.onSurface
+                    else -> scheme.onSurfaceVariant
+                },
+            )
+            if (selected) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(scheme.primary),
+                )
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth()) {
+        Tab("ORIGINAL", !showRewrite, false, true, Modifier.weight(1f), onOriginal)
+        Tab(
+            label = when {
+                rewriting -> "● ${words}w"
+                hasRewrite -> "REWRITTEN"
+                else -> "✦ REWRITE"
+            },
+            selected = showRewrite && hasRewrite,
+            accent = rewriting || !hasRewrite,
+            enabled = rewriting || hasRewrite || canStart,
+            modifier = Modifier.weight(1f),
+            onClick = onRewritten,
+        )
+        Tab("⚙", false, false, true, Modifier.width(56.dp), onSettings)
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
+    if (rewriting) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = listOfNotNull(status, words.takeIf { it > 0 }?.let { "$it words" }).joinToString(" · ")
+                    .ifEmpty { "Starting the rewrite. You can keep reading the original." },
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Box(Modifier.height(36.dp).clickable(onClick = onStop).padding(start = 12.dp), contentAlignment = Alignment.Center) {
+                Text("STOP", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
+            }
+        }
+    }
+}

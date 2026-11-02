@@ -17,15 +17,25 @@ object MarkdownWriter {
         is Block.Paragraph -> protectLineStart(inline(block.spans))
         is Block.Bullet -> "- " + inline(block.spans)
         is Block.Numbered -> "${block.marker}. " + inline(block.spans)
-        is Block.Quote -> "> " + inline(block.spans)
+        // One `>` line per line of the quote, so a multi-line panel reads back as one block.
+        is Block.Quote -> lines(block.spans).joinToString("\n") { if (it.isEmpty()) ">" else "> " + inline(it) }
         Block.Rule -> "---"
         is Block.Code -> "```\n${block.text}\n```"
+    }
+
+    /** Splits spans at the `"\n"` spans a multi-line quote is joined with. */
+    private fun lines(spans: List<InlineSpan>): List<List<InlineSpan>> {
+        val out = mutableListOf(mutableListOf<InlineSpan>())
+        for (span in spans) if (span.text == "\n") out += mutableListOf<InlineSpan>() else out.last() += span
+        return out
     }
 
     private fun inline(spans: List<InlineSpan>): String = spans.joinToString("") { span(it) }
 
     private fun span(span: InlineSpan): String {
         val text = oneLine(span.text)
+        // All whitespace: leading and trailing would overlap, and there is nothing to mark.
+        if (text.isBlank()) return text
         val lead = text.takeWhile { it.isWhitespace() }
         val trail = text.takeLastWhile { it.isWhitespace() }
         val core = text.substring(lead.length, text.length - trail.length)

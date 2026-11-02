@@ -15,6 +15,7 @@ sealed interface Block {
     data class Paragraph(val spans: List<InlineSpan>) : Block
     data class Bullet(val spans: List<InlineSpan>) : Block
     data class Numbered(val marker: String, val spans: List<InlineSpan>) : Block
+    /** A blockquote; consecutive `>` lines stay one block, joined by `"\n"` spans. */
     data class Quote(val spans: List<InlineSpan>) : Block
     data object Rule : Block
     data class Code(val text: String) : Block
@@ -65,6 +66,8 @@ object MarkdownParser {
         val paragraph = StringBuilder()
         val code = StringBuilder()
         var inFence = false
+        // A run of `>` lines is one quote, so a status screen stays one panel.
+        var inQuote = false
 
         fun flushParagraph() {
             val value = paragraph.toString().trim()
@@ -95,6 +98,7 @@ object MarkdownParser {
 
             if (line.isBlank()) {
                 flushParagraph()
+                inQuote = false
                 continue
             }
 
@@ -113,9 +117,18 @@ object MarkdownParser {
 
             if (trimmed.startsWith(">")) {
                 flushParagraph()
-                blocks += Block.Quote(parseInline(trimmed.removePrefix(">").trim()))
+                val content = trimmed.removePrefix(">").trim()
+                val spans = if (content.isEmpty()) emptyList() else parseInline(content)
+                val last = blocks.lastOrNull()
+                if (inQuote && last is Block.Quote) {
+                    blocks[blocks.lastIndex] = Block.Quote(last.spans + InlineSpan("\n") + spans)
+                } else if (spans.isNotEmpty()) {
+                    blocks += Block.Quote(spans)
+                    inQuote = true
+                }
                 continue
             }
+            inQuote = false
 
             if (isBullet(trimmed)) {
                 flushParagraph()
@@ -254,5 +267,58 @@ object MarkdownParser {
 
         walk(text, InlineSpan(""))
         return spans
+    }
+}
+
+/**
+ * A system or status display: a quote whose text is all bold, or any quote or paragraph that is a
+ * bracketed notice such as `[You have slain a dormant beast.]` or `<Level up>`.
+ */
+fun Block.isSystemDisplay(): Boolean {
+    val spans = when (this) {
+        is Block.Quote -> spans
+        is Block.Paragraph -> spans
+        else -> return false
+    }
+    val text = spans.joinToString("") { it.text }.trim()
+    if (text.isEmpty()) return false
+    val bracketed = text.first() in "[<【「" && text.last() in "]>】」"
+    if (this is Block.Paragraph) return bracketed
+    return bracketed || spans.filter { it.text.isNotBlank() }.all { it.bold }
+}
+
+/** One message of a chat panel: the sender (null for a group notice) and what was said. */
+data class ChatMessage(val sender: String?, val spans: List<InlineSpan>)
+
+private val chatParagraph = Regex("""^([A-Z][\p{L}'’.-]*(?: [A-Z][\p{L}'’.-]*){0,3}):\s*([“"].*)$""")
+
+/**
+ * The messages of a chat log, or null when the block is not one. A quote is a chat log when its
+ * lines start with a bold sender (`> **Fang Yun:** “...”`); a lone paragraph of the form
+ * `Fang Yun: "..."`, as scraped chapters print them, is a one-message log.
+ */
+fun Block.chatMessages(): List<ChatMessage>? {
+    if (isSystemDisplay()) return null
+    return when (this) {
+        is Block.Quote -> {
+            val lines = mutableListOf(mutableListOf<InlineSpan>())
+            spans.forEach { if (it.text == "\n") lines += mutableListOf<InlineSpan>() else lines.last() += it }
+            val messages = lines.filter { line -> line.any { it.text.isNotBlank() } }.map { line ->
+                val head = line.first()
+                if (head.bold && head.text.trim().endsWith(":") && line.size > 1) {
+                    ChatMessage(head.text.trim().removeSuffix(":").trim(), line.drop(1).let { rest ->
+                        listOf(rest.first().copy(text = rest.first().text.trimStart())) + rest.drop(1)
+                    })
+                } else {
+                    ChatMessage(null, line)
+                }
+            }
+            messages.takeIf { list -> list.any { it.sender != null } }
+        }
+        is Block.Paragraph -> {
+            val text = spans.joinToString("") { it.text }.trim()
+            chatParagraph.find(text)?.let { listOf(ChatMessage(it.groupValues[1], listOf(InlineSpan(it.groupValues[2])))) }
+        }
+        else -> null
     }
 }
