@@ -83,6 +83,56 @@ class RewriteTest {
         assert(scenes.zipWithNext().all { (a, b) -> b.from == a.to + 1 })
     }
 
+    @Test fun protectedPhrasesMustActuallyBeQuotedInTheSource() {
+        val paras = listOf("She said, “Au revoir, my cabbages!” She left through the side door.")
+        val raw = """
+            === BEATS ===
+            1. [P1] She says goodbye and leaves | cause: unknown
+            === SCENES ===
+            S1 | P1-P1 | type: dialogue
+            === FLAGS ===
+            - her farewell is deliberately playful
+            === KEEP ===
+            - “Au revoir, my cabbages!”
+            - Goodbye, my cabbages!
+            - She left through the side door.
+            - revoir, my cabbage
+            - none
+        """.trimIndent()
+        val plan = RewritePipeline.parsePlan(raw, paras)
+        assertEquals(listOf("Au revoir, my cabbages!"), plan.keep)
+        assertEquals(listOf("her farewell is deliberately playful"), plan.flags)
+        assertEquals(1, plan.beats.size)
+        assertEquals(emptyList<String>(), RewritePipeline.parsePlan("=== FLAGS ===\n- none", paras).keep)
+    }
+
+    @Test fun protectedWordingFlagsChangedWordsWithoutForcingThoughtsIntoSpeech() {
+        val phrase = "Au revoir, my cabbages!"
+        val source = "“$phrase” she said."
+        fun protectedProblems(draft: String) = Fidelity.sceneProblems(source, draft, emptyList(), 0, "", keep = listOf(phrase))
+            .filter { it.contains("protected phrases") }
+        assertEquals(emptyList<String>(), protectedProblems("She waved. \"$phrase\""))
+        // The planner can mistake a quoted thought or label for speech. A wording check must not
+        // force that material into a character's mouth just because formatting changed.
+        assertEquals(emptyList<String>(), protectedProblems("She thought: *$phrase*"))
+        assertEquals(1, protectedProblems("“Goodbye, my cabbages!”").size)
+        assertEquals(1, protectedProblems("“Au revoir, my cabbages?”").size)
+    }
+
+    @Test fun protectedPhraseMatchingAllowsTypographyButNotPartialWords() {
+        assertEquals(true, Fidelity.containsQuotedWording("‘Don’t give up!’ she said.", "Don't give up!"))
+        assertEquals(true, Fidelity.containsQuotedWording("'Don't give up!' she said.", "Don’t give up!"))
+        assertEquals(true, Fidelity.containsQuotedWording("“Please, never   say never.”", "never say never"))
+        assertEquals(false, Fidelity.containsQuotedWording("“Stay alive.”", "Stay a"))
+        assertEquals(false, Fidelity.containsQuotedWording("“Don't surrender!”", ""))
+    }
+
+    @Test fun ordinaryDialogueCanImproveWithoutAnExactTextOrParagraphCountGate() {
+        val source = "“It is not possible for me to agree.”\n\n“Do not ask again,” she said.\n\n“I have made my decision.”"
+        val draft = "“I can't agree. Don't ask again. I've made up my mind,” she said."
+        assertEquals(emptyList<String>(), Fidelity.sceneProblems(source, draft, emptyList(), 0, ""))
+    }
+
     @Test fun tinyScenesAreFoldedAndHugeOnesSplit() {
         val paras = listOf("word ".repeat(50).trim()) + List(8) { "word ".repeat(300).trim() }
         val raw = "=== SCENES ===\nS1 | P1-P1 | type: comedy\nS2 | P2-P9 | type: crowd"

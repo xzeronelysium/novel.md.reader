@@ -20,11 +20,12 @@ object RewritePrompts {
     internal const val BEATS = "=== BEATS ==="
     internal const val SCENES = "=== SCENES ==="
     internal const val FLAGS = "=== FLAGS ==="
+    internal const val KEEP = "=== KEEP ==="
 
     val ANALYSE = """
         You plan the rewrite of ONE chapter of a web novel. You do not write prose. The source is split into numbered paragraphs [P1], [P2], ...
 
-        Do three things:
+        Do four things:
 
         1. BEATS. List every beat of the source in order: each thing that happens, is said, is decided, is felt or is learned, including physical and bodily details and small emotional turns ("he is so pleased he forgets to be disappointed"). One line each, with the paragraph range and the cause. The cause comes from the source, from the memory, or is "unknown". Never invent a cause.
 
@@ -37,6 +38,8 @@ object RewritePrompts {
 
         3. FLAGS. Lines that do not fit the speaker's recorded voice (with a hypothesis: lying, disguised, under stress, or someone else), and contradictions between the source and the memory. Write "- none" if there are none.
 
+        4. KEEP. Select only spoken phrases whose exact wording matters: a recurring catchphrase, a wordplay-dependent punchline, or words another character explicitly quotes or answers word for word. Do not freeze every joke, insult, oath or emotional line: awkward wording can improve while its meaning and effect stay intact. Copy each selected phrase exactly as the source prints it, without quote marks, as one uninterrupted quoted span. Usually 0 to 6 per chapter. Check the surrounding narration: quote marks alone do not make a phrase spoken dialogue. Exclude thoughts, quoted nicknames or labels, narration and reported speech. Write "- none" if there are none.
+
         Reply in exactly this form, nothing before or after:
         $BEATS
         1. [P1-P2] <beat> | cause: <cause>
@@ -44,6 +47,8 @@ object RewritePrompts {
         S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b>; <c> | sharpen: <moment> | anchor: <detail>
         $FLAGS
         - <flag>
+        $KEEP
+        - <line copied exactly from the source>
     """.trimIndent()
 
     // ---- Step 2: write, one scene at a time --------------------------------------------------
@@ -53,7 +58,7 @@ object RewritePrompts {
 
         CANON, never changed
         - Every beat in the list you are given happens, in that order, with the same outcome. Keep every physical detail and every emotional turn as the source states it. If the source says he forgets to be disappointed, he forgets: do not turn a non-event into an event, or an event into a non-event.
-        - Names, ranks, abilities, numbers, items, system text and every line of dialogue's meaning stay as the source has them. Do not invent names, titles, techniques, nicknames or labels for things the source does not name.
+        - Names, ranks, abilities, numbers, items and system text stay as the source has them. Do not invent names, titles, techniques, nicknames or labels for things the source does not name.
         - Nothing from later chapters. Ambiguity stays ambiguous.
 
         TEXTURE, yours to add
@@ -62,8 +67,15 @@ object RewritePrompts {
         THE LAWS
         - Causality: show why things happen, using the causes you are given. If a cause is unknown, do not make one up.
         - Continuity: people know only what they have learned; places, wounds and objects stay as the memory left them.
-        - Voice: each speaker talks the way the memory records them.
+        - Voice: preserve each speaker's vocabulary, rhythm, manners and status from the source and memory. The current scene governs deliberate changes under stress, deception or disguise; do not flatten everyone into the same polished voice.
         - Proportion: effort, pain and cost show up in the body and in later lines.
+
+        DIALOGUE: improve how it is said, never what is said
+        - Rewrite lines that are stiff, over-explained, clumsily translated or flat so they sound like this person talking in this moment. Improve idiom, rhythm and emphasis without making a formal speaker casual, a hesitant speaker confident, or a blunt speaker eloquent. Leave already-effective lines alone. Preserve interruptions, hesitation and evasions where the source supports them; do not invent a different answer or motive.
+        - What stays fixed: what each line says (every piece of information, claim, request, refusal, lie and promise), who says it, to whom, its place in the exchange, and its effect on the listener.
+        - Preserve every conversational beat, not every sentence boundary: lines may be split or combined within the same speaker's turn if nothing is lost. Do not reduce an exchange to a summary. Spoken stays spoken; thoughts stay thoughts. Read the surrounding narration to tell them apart: muttered or whispered words are still spoken, while a phrase marked "thought to herself" stays internal even if quoted.
+        - The phrases you are told to keep word for word retain their exact wording and their role in the source. If the plan mistakenly selected a thought or label, keep it internal or as a label; never make it spoken. Surrounding dialogue may still improve.
+        - New dialogue goes only to unnamed bystanders as inconsequential texture. Named characters may be reworded, but gain no new claims, knowledge, commitments or exchanges. Reported speech stays reported.
 
         CRAFT
         - Amplify the register you are given. Comic scenes get funnier, grim scenes heavier, tense scenes tighter.
@@ -110,6 +122,9 @@ object RewritePrompts {
         Alive: "The blade came down with a sound like a cleaver through a melon. The head hit the boards, rolled once, and stopped facing the door. For a moment the body stayed kneeling, as if no one had told it."
         Flat: "He thought about how formations were ranked."
         Alive: "He traced the second line again. One pattern made an apprentice. Six made a Formation Master. Nine, and the Taoist Court would put your name on a list. His finger stopped at two."
+        Stiff dialogue from a blunt speaker: "It is not possible for me to agree to your request. Do not ask me another time. My decision has already been made."
+        Natural, same meaning and firmness: "I can't agree to what you're asking. Don't ask again. I've made up my mind."
+        This changes the actual dialogue, not just its tags or surrounding gestures. Preserve all three beats: refusal, instruction not to ask again, and a settled decision. Do not turn this into a threat, an apology, a new reason or a different personality.
 
         LENGTH IS A MINIMUM. The message gives the minimum and maximum words for this scene. Reach the minimum with real texture on the beats that matter, never with filler, repetition or summary.
     """.trimIndent()
@@ -117,7 +132,7 @@ object RewritePrompts {
     /** How each kind of scene is enhanced; only the scene's own method is sent. */
     val METHODS = mapOf(
         "action" to "SCENE METHOD (action): blow by blow, in the order it happens. Each move has weight, sound and a body cost. Let space and footing matter. After the violence, show what it cost: breath, shaking hands, blood, silence.",
-        "dialogue" to "SCENE METHOD (dialogue): give each speaker a goal and a tell. Cut lines that only relay what both already know into action beats or glances. Let silences and interruptions carry pressure. Keep every piece of information that passes between them.",
+        "dialogue" to "SCENE METHOD (dialogue): give each speaker a goal and a tell. Make every line sound like that speaker under that pressure: rework stiff or translated wording, and let silences, interruptions and action beats carry what the words leave unsaid. Keep every piece of information that passes between them, and every line you are told to keep word for word.",
         "inner" to "SCENE METHOD (inner thought and explanation): do not paraphrase a block of thinking. Put the character in the present moment, doing something with their hands or body, and let each fact arrive as something they notice, remember, test or decide. Keep every fact and every number of the explanation.",
         "comedy" to "SCENE METHOD (comedy): set up, then a specific absurd detail, then an undercut, then a beat for the reaction. Timing matters more than adjectives. Let the straight man stay straight.",
         "system" to "SCENE METHOD (system and status screens): keep each screen verbatim as a blockquote. The feeling lives in the character's reaction before and after: what they expected, what they see, what they do next.",

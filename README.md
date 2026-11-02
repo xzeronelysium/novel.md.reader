@@ -49,6 +49,12 @@ Everything stays in app-private storage under `rewrites/<novel>/`. The prompts
 are in `data/RewritePrompts.kt`; system screens, chat logs, letters and scene
 breaks each have a fixed Markdown form that the reader draws in its own way.
 
+Dialogue may be reworded for naturalness while preserving meaning, intent and
+character voice. The plan reserves exact wording only for phrases that depend
+on it, such as catchphrases and wordplay. Code checks those phrases survive;
+it does not prove semantic equivalence or identify every speaker. The writing
+instructions preserve whether each passage is spoken, thought or reported.
+
 Debug builds include a prompt lab for measuring prompt changes on real
 chapters: `tools/lab/lab.py start <run>` rewrites a fixed test set on the phone,
 and `tools/lab/lab.py pull <run>` scores it and writes a side-by-side report to

@@ -164,7 +164,8 @@ class LabActivity : ComponentActivity() {
         val store = LibraryStore(this)
         val vault = Vault.of(this)
         val rewrites = RewriteStore.of(this)
-        val base = rewrites.settings()
+        // This lab targets Ollama models even when the reader currently uses a ChatGPT sign-in.
+        val base = rewrites.settings().copy(provider = com.mdreader.data.RewriteSettings.OLLAMA)
         if (base.apiKey.isBlank()) {
             say("No API key saved. Set it in the reader's rewrite settings first.")
             return

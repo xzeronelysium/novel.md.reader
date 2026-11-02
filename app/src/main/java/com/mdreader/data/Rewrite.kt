@@ -226,7 +226,7 @@ object RewriteClient {
     // The default Android agent is refused (403) by the host's firewall.
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     /** Bumped whenever a prompt changes, and stamped into every note, so outputs can be compared. */
-    const val PROMPT_VERSION = "2026-11-03.4"
+    const val PROMPT_VERSION = "2026-11-03.7"
     /** Minimum and maximum words for a chapter of [sourceWords], by strength. */
     internal fun lengthTarget(strength: String, sourceWords: Int): Pair<Int, Int> {
         val (low, high) = when (strength) {
@@ -611,8 +611,12 @@ object Fidelity {
         before: String = "",
         /** Every scene written so far, so a description repeated across scenes still counts. */
         earlier: String = "",
+        /** Lines of dialogue that must appear word for word. */
+        keep: List<String> = emptyList(),
     ): List<String> {
         val out = mutableListOf<String>()
+        val lostLines = keep.filterNot { containsWording(draft, it) }
+        if (lostLines.isNotEmpty()) out += "Restore these protected phrases in their original context, preserving their wording. Keep speech spoken, thoughts internal and labels as labels: " + lostLines.joinToString(" | ") { "\"$it\"" }
         val count = wordCount(draft)
         if (minWords > 0 && count < minWords * 0.92) {
             out += "It has $count words; the minimum is $minWords. Add real texture to the beats that matter, not filler."
@@ -643,6 +647,29 @@ object Fidelity {
         val invented = inventedNames(draft, source + "\n" + known)
         if (invented.isNotEmpty()) out += "These names or labels are not in the source or the memory; remove them or use the source's own words: " + invented.joinToString(", ")
         return out
+    }
+
+    /**
+     * A deliberately narrow wording check, not a semantic dialogue classifier. Quote styles and
+     * whitespace may change; words, case and punctuation may not. Used to validate the plan
+     * against source quotations. A source quotation can still be a thought or label, so the output
+     * check below deliberately does not require quotation marks or force it into spoken dialogue.
+     */
+    internal fun containsQuotedWording(text: String, phrase: String): Boolean {
+        return Regex("“([^”]+)”|\"([^\"]+)\"|‘([^\\n]+?)’(?![\\p{L}\\p{N}])|(?<![\\p{L}\\p{N}])'([^\\n]+?)'(?![\\p{L}\\p{N}])")
+            .findAll(text).any { quote ->
+                val content = quote.groupValues.drop(1).first { it.isNotEmpty() }
+                containsWording(content, phrase)
+            }
+    }
+
+    private fun containsWording(text: String, phrase: String): Boolean {
+        fun canonical(s: String) = s.replace('’', '\'').replace('‘', '\'')
+            .replace(Regex("\\s+"), " ").trim()
+        val wanted = canonical(phrase)
+        if (wanted.isEmpty()) return false
+        return Regex("(?<![\\p{L}\\p{N}_])" + Regex.escape(wanted) + "(?![\\p{L}\\p{N}_])")
+            .containsMatchIn(canonical(text))
     }
 
     private fun beatStems(text: String): Set<String> = words(text).filter { it.length >= 4 }.map { it.take(4) }.toSet()

@@ -26,7 +26,8 @@ object RewritePipeline {
         val anchor: String = "",
     )
 
-    data class Plan(val beats: List<Beat>, val scenes: List<Scene>, val flags: List<String>)
+    /** [keep]: spoken phrases whose exact wording matters, such as catchphrases and wordplay. */
+    data class Plan(val beats: List<Beat>, val scenes: List<Scene>, val flags: List<String>, val keep: List<String> = emptyList())
 
     /** Source paragraphs, as the analysis numbers them. */
     fun paragraphs(markdown: String): List<String> =
@@ -73,6 +74,7 @@ object RewritePipeline {
             onStage("WRITING $label")
             val source = paras.subList(scene.from - 1, scene.to).joinToString("\n\n")
             val beats = plan.beats.filter { it.from in scene.from..scene.to }
+            val keep = plan.keep.filter { Fidelity.containsQuotedWording(source, it) }
             val (minWords, maxWords) = RewriteClient.lengthTarget(settings.strength, Fidelity.wordCount(source))
             val before = if (i == 0) previousTail?.let { "END OF THE PREVIOUS CHAPTER (pick up from it, do not repeat it):\n$it" }
             else "THE SCENE JUST BEFORE ENDS (continue from it, do not repeat it):\n" + RewriteClient.tailWords(written.last(), 150)
@@ -81,6 +83,7 @@ object RewritePipeline {
                 if (before != null) append(before).append("\n\n")
                 append("PLAN FOR THIS SCENE: type ${scene.type}; register ${scene.register}; texture ${scene.texture}; sharpen ${scene.sharpen}; anchor ${scene.anchor}\n\n")
                 if (beats.isNotEmpty()) append("BEATS THAT MUST HAPPEN, IN ORDER:\n").append(beats.joinToString("\n") { "- ${it.text} (cause: ${it.cause})" }).append("\n\n")
+                if (keep.isNotEmpty()) append("PROTECTED PHRASES (retain wording in the source's original context and role; other wording may improve. If the plan selected a thought or label, keep it as such, never force it into speech):\n").append(keep.joinToString("\n") { "- $it" }).append("\n\n")
                 if (i > 0) append("If this scene opens at a new time or place compared with the scene before, start it with a line containing only ---.\n\n")
                 if (i == plan.scenes.lastIndex) {
                     append("THIS IS THE LAST SCENE OF THE CHAPTER. End on the same moment, line and feeling as the source's last paragraph; add nothing after it.\n\n")
@@ -93,7 +96,7 @@ object RewritePipeline {
             var draft = clean(RewriteClient.stream(settings, system, user, onProgress, RewriteClient.CREATIVE))
             val previousScene = written.lastOrNull().orEmpty()
             val soFar = written.joinToString("\n\n")
-            var problems = Fidelity.sceneProblems(source, draft, beats.map { it.text }, minWords, known, previousScene, soFar)
+            var problems = Fidelity.sceneProblems(source, draft, beats.map { it.text }, minWords, known, previousScene, soFar, keep)
             if (problems.isNotEmpty()) {
                 onStage("REPAIRING $label")
                 repairs++
@@ -103,7 +106,7 @@ object RewritePipeline {
                 val second = runCatching { clean(RewriteClient.stream(settings, system, retry, onProgress, RewriteClient.CREATIVE)) }
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
                 if (second != null && second.isNotBlank()) {
-                    val secondProblems = Fidelity.sceneProblems(source, second, beats.map { it.text }, minWords, known, previousScene, soFar)
+                    val secondProblems = Fidelity.sceneProblems(source, second, beats.map { it.text }, minWords, known, previousScene, soFar, keep)
                     if (secondProblems.size < problems.size ||
                         (secondProblems.size == problems.size && Fidelity.wordCount(second) > Fidelity.wordCount(draft))
                     ) {
@@ -138,6 +141,7 @@ object RewritePipeline {
             append("\n## Voice flags and conflicts\n").append(plan.flags.ifEmpty { listOf("none") }.joinToString("\n") { "- $it" })
             append("\n\n## Enhancement plan\n")
             append(plan.scenes.withIndex().joinToString("\n") { (i, s) -> "S${i + 1} | P${s.from}-P${s.to} | ${s.type} | ${s.register} | ${s.texture} | ${s.sharpen} | ${s.anchor}" })
+            if (plan.keep.isNotEmpty()) append("\n\n## Protected dialogue\n").append(plan.keep.joinToString("\n") { "- $it" })
             if (warnings.isNotEmpty()) append("\n\n## Fidelity warnings\n").append(warnings.joinToString("\n") { "- $it" })
             append("\n\n## Run\n- prompt ${RewriteClient.PROMPT_VERSION}\n- model ${settings.model}")
             if (settings.effort.isNotBlank()) append(" (effort ${settings.effort})")
@@ -159,7 +163,7 @@ object RewritePipeline {
         }
         val range = Regex("""\[?P(\d+)(?:\s*[-–]\s*P?(\d+))?\]?""")
 
-        val beats = section(RewritePrompts.BEATS, RewritePrompts.SCENES, RewritePrompts.FLAGS).lines().mapNotNull { line ->
+        val beats = section(RewritePrompts.BEATS, RewritePrompts.SCENES, RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().mapNotNull { line ->
             val body = Regex("""^\s*\d+[.)]\s*(.+)""").find(line)?.groupValues?.get(1) ?: return@mapNotNull null
             val r = range.find(body)
             val from = r?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(1, maxOf(n, 1)) ?: return@mapNotNull null
@@ -168,7 +172,7 @@ object RewritePipeline {
             Beat(from, to, rest.substringBefore("| cause:").substringBefore("|").trim(), rest.substringAfter("cause:", "").trim())
         }
 
-        val scenes = section(RewritePrompts.SCENES, RewritePrompts.FLAGS).lines().mapNotNull { line ->
+        val scenes = section(RewritePrompts.SCENES, RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().mapNotNull { line ->
             if (!line.trim().startsWith("S", ignoreCase = true)) return@mapNotNull null
             val parts = line.split('|').map { it.trim() }
             val r = parts.firstNotNullOfOrNull { range.find(it)?.takeIf { m -> it.startsWith("P") || it.startsWith("[P") } } ?: return@mapNotNull null
@@ -179,13 +183,21 @@ object RewritePipeline {
                 field("register"), field("texture"), field("sharpen"), field("anchor"))
         }
 
-        val flags = section(RewritePrompts.FLAGS).lines().map { it.trim() }
+        val flags = section(RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().map { it.trim() }
             .filter { it.startsWith("- ") && !it.removePrefix("- ").trim().equals("none", true) }
             .map { it.removePrefix("- ").trim() }
+        // Only lines the source really prints: a "keep" line the model misquoted would be impossible to meet.
+        val sourceText = paras.joinToString("\n\n")
+        val keep = section(RewritePrompts.KEEP).lines().map { it.trim() }
+            .filter { it.startsWith("- ") }
+            .map { it.removePrefix("- ").trim().removeSurrounding("\"").removeSurrounding("“", "”")
+                .removeSurrounding("'").removeSurrounding("‘", "’").trim() }
+            .filter { it.isNotEmpty() && !it.equals("none", true) && Fidelity.containsQuotedWording(sourceText, it) }
+            .distinct()
 
         val valid = scenes.isNotEmpty() && scenes.first().from == 1 && scenes.last().to == n &&
             scenes.zipWithNext().all { (a, b) -> b.from == a.to + 1 } && scenes.all { it.from <= it.to }
-        return Plan(beats, if (valid) balance(scenes, paras) else fallbackPlan(paras).scenes, flags)
+        return Plan(beats, if (valid) balance(scenes, paras) else fallbackPlan(paras).scenes, flags, keep)
     }
 
     /** Scenes in ~600-word chunks at paragraph boundaries, when the analysis is unusable. */
