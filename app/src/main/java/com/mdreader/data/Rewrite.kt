@@ -21,8 +21,13 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Where the rewrite service lives: any OpenAI-compatible `/chat/completions` endpoint. */
+/**
+ * Where a rewrite runs: Ollama Cloud (an OpenAI-compatible `/chat/completions` endpoint with an API
+ * key) or ChatGPT (Sign in with ChatGPT, through OpenAI's Responses API).
+ */
 data class RewriteSettings(
+    /** "ollama" or "chatgpt". */
+    val provider: String = OLLAMA,
     val baseUrl: String = "https://ollama.com/v1",
     val apiKey: String = "",
     val model: String = "",
@@ -32,8 +37,21 @@ data class RewriteSettings(
     val strength: String = "full",
     /** How many earlier chapters the memory reads before a rewrite; 0 reads from chapter 1. */
     val memoryDepth: Int = 20,
+    /** The ChatGPT sign-in, when there is one. */
+    val chatgpt: ChatGptCredential? = null,
+    /** This installation's stable id, which ChatGPT sign-in asks for. */
+    val deviceId: String = "",
 ) {
-    val ready: Boolean get() = baseUrl.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank()
+    val isChatGpt: Boolean get() = provider == CHATGPT
+
+    val signedIn: Boolean get() = if (isChatGpt) chatgpt != null else baseUrl.isNotBlank() && apiKey.isNotBlank()
+
+    val ready: Boolean get() = signedIn && model.isNotBlank()
+
+    companion object {
+        const val OLLAMA = "ollama"
+        const val CHATGPT = "chatgpt"
+    }
 }
 
 /** Seals the API key before it touches disk. */
@@ -96,6 +114,7 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     fun settings(): RewriteSettings = runCatching {
         val json = JSONObject(settingsFile.readText())
         RewriteSettings(
+            provider = json.optString("provider", RewriteSettings.OLLAMA),
             baseUrl = json.optString("baseUrl", RewriteSettings().baseUrl),
             // `apiKey` is the plaintext of an earlier version; it is re-sealed on the next save.
             apiKey = json.optString("apiKeyEnc").takeIf { it.isNotEmpty() }?.let(box::open)
@@ -104,12 +123,29 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
             effort = json.optString("effort"),
             strength = json.optString("strength", "full"),
             memoryDepth = json.optInt("memoryDepth", 20).coerceAtLeast(0),
+            chatgpt = json.optString("chatgptEnc").takeIf { it.isNotEmpty() }?.let(box::open)?.let(ChatGptCredential::fromJson),
+            deviceId = json.optString("deviceId"),
         )
-    }.getOrDefault(RewriteSettings())
+    }.getOrDefault(RewriteSettings()).let { loaded ->
+        // ChatGPT sign-in identifies the installation by a UUID that never changes.
+        if (loaded.deviceId.isNotBlank()) loaded else loaded.copy(deviceId = java.util.UUID.randomUUID().toString()).also(::saveSettings)
+    }
 
     @Synchronized
     fun saveSettings(settings: RewriteSettings) {
+        // A screen holding an older copy of the ChatGPT grant must not undo a renewal made since:
+        // the refresh token rotates, so the older one may no longer work.
+        val stored = runCatching {
+            JSONObject(settingsFile.readText()).optString("chatgptEnc").takeIf { it.isNotEmpty() }
+                ?.let(box::open)?.let(ChatGptCredential::fromJson)
+        }.getOrNull()
+        val grant = settings.chatgpt?.let { given ->
+            if (stored != null && stored.clientId == given.clientId && stored.expires > given.expires) stored else given
+        }
         val json = JSONObject()
+            .put("provider", settings.provider)
+            .put("deviceId", settings.deviceId)
+            .apply { grant?.let { put("chatgptEnc", box.seal(it.toJson())) } }
             .put("baseUrl", settings.baseUrl.trim())
             .put("apiKeyEnc", box.seal(settings.apiKey.trim()))
             .put("model", settings.model.trim())
@@ -175,7 +211,9 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     }
 
     companion object {
-        fun of(context: android.content.Context) = RewriteStore(context.filesDir, KeystoreSecretBox)
+        fun of(context: android.content.Context) = RewriteStore(context.filesDir, KeystoreSecretBox).also { store ->
+            ChatGptTokens.save = { fresh -> store.saveSettings(store.settings().copy(chatgpt = fresh)) }
+        }
     }
 }
 
@@ -237,8 +275,9 @@ object RewriteClient {
         onProgress: (Int) -> Unit,
         temperature: Double = EXACT,
     ): String = withContext(Dispatchers.IO) {
-        require(settings.ready) { "Set the endpoint, key and model first." }
-        val body = JSONObject()
+        require(settings.ready) { if (settings.isChatGpt) "Sign in with ChatGPT and choose a model first." else "Set the endpoint, key and model first." }
+        val chatgpt = settings.isChatGpt
+        val body = if (chatgpt) responsesBody(settings, system, user, temperature) else JSONObject()
             .put("model", settings.model)
             .put("stream", true)
             .put("temperature", temperature)
@@ -250,8 +289,9 @@ object RewriteClient {
                     .put(JSONObject().put("role", "user").put("content", user)),
             )
             .toString()
+        val bearer = if (chatgpt) ChatGptTokens.access(settings.chatgpt!!) else settings.apiKey.trim()
 
-        val url = settings.baseUrl.trim().trimEnd('/') + "/chat/completions"
+        val url = if (chatgpt) "${ChatGptAuth.RESOURCE}/responses" else settings.baseUrl.trim().trimEnd('/') + "/chat/completions"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = CONNECT_TIMEOUT_MS
@@ -260,7 +300,7 @@ object RewriteClient {
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "text/event-stream")
-            setRequestProperty("Authorization", "Bearer ${settings.apiKey.trim()}")
+            setRequestProperty("Authorization", "Bearer $bearer")
             setRequestProperty("User-Agent", USER_AGENT)
         }
         // A blocked read does not notice cancellation; closing the socket does.
@@ -271,13 +311,15 @@ object RewriteClient {
             val code = connection.responseCode
             if (code !in 200..299) {
                 val text = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (chatgpt && code == 401) throw IOException("ChatGPT no longer accepts this sign-in. Sign in again in the settings.")
                 throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
             }
             val answer = StringBuilder()
             connection.inputStream.bufferedReader().useLines { lines ->
                 for (line in lines) {
                     currentCoroutineContext().ensureActive()
-                    val delta = deltaOf(line) ?: continue
+                    if (chatgpt) responsesErrorOf(line)?.let { throw IOException(it) }
+                    val delta = (if (chatgpt) responsesDeltaOf(line) else deltaOf(line)) ?: continue
                     answer.append(delta)
                     onProgress(answer.length)
                 }
@@ -287,6 +329,43 @@ object RewriteClient {
             watcher?.dispose()
             connection.disconnect()
         }
+    }
+
+    /** A Responses API request: the system prompt as instructions, the rest as one user message. */
+    internal fun responsesBody(settings: RewriteSettings, system: String, user: String, temperature: Double): String =
+        JSONObject()
+            .put("model", settings.model)
+            .put("stream", true)
+            .put("store", false)
+            .put("instructions", system)
+            .put(
+                "input",
+                JSONArray().put(
+                    JSONObject().put("role", "user")
+                        .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", user))),
+                ),
+            )
+            .apply { if (ChatGptModels.acceptsTemperature(settings.model)) put("temperature", temperature) }
+            .apply { if (settings.effort.isNotBlank()) put("reasoning", JSONObject().put("effort", settings.effort)) }
+            .toString()
+
+    /** The text a Responses `data:` line adds: only `response.output_text.delta` events carry any. */
+    internal fun responsesDeltaOf(line: String): String? {
+        if (!line.startsWith("data:")) return null
+        val json = runCatching { JSONObject(line.removePrefix("data:").trim()) }.getOrNull() ?: return null
+        return if (json.optString("type") == "response.output_text.delta") json.optString("delta").takeIf { it.isNotEmpty() } else null
+    }
+
+    /** A failure reported inside the stream (`error` or `response.failed`), as a message to show. */
+    internal fun responsesErrorOf(line: String): String? {
+        if (!line.startsWith("data:")) return null
+        val json = runCatching { JSONObject(line.removePrefix("data:").trim()) }.getOrNull() ?: return null
+        val message = when (json.optString("type")) {
+            "error" -> json.optString("message").ifBlank { json.optJSONObject("error")?.optString("message").orEmpty() }
+            "response.failed" -> json.optJSONObject("response")?.optJSONObject("error")?.optString("message").orEmpty()
+            else -> return null
+        }
+        return "ChatGPT stopped: " + message.ifBlank { "unknown error" }.take(160)
     }
 
     /** The text a server-sent `data:` line adds to the answer; null for anything else. */
@@ -312,6 +391,12 @@ object RewriteClient {
         // Never the raw body: an HTML error page is noise in a phone dialog.
         else -> listOf("The service answered $code.", errorMessage(body)).filter { it.isNotBlank() }.joinToString(" ")
     }
+
+    /** The models this ChatGPT account can write with: its own list when readable, else a known set. */
+    suspend fun chatGptModels(credential: ChatGptCredential): List<String> = runCatching {
+        val listed = models(ChatGptAuth.RESOURCE, ChatGptTokens.access(credential)).filter(ChatGptModels::isWritingModel)
+        listed.sortedDescending().ifEmpty { ChatGptModels.FALLBACK }
+    }.getOrDefault(ChatGptModels.FALLBACK)
 
     /** Model ids the endpoint offers (`GET /models`), sorted. */
     suspend fun models(baseUrl: String, apiKey: String): List<String> = withContext(Dispatchers.IO) {
