@@ -23,11 +23,12 @@ object RewritePrompts {
     internal const val SCENES = "=== SCENES ==="
     internal const val FLAGS = "=== FLAGS ==="
     internal const val KEEP = "=== KEEP ==="
+    internal const val VOICES = "=== VOICES ==="
 
     val ANALYSE = """
         You plan the rewrite of ONE chapter of a web novel. You do not write prose. The source is split into numbered paragraphs [P1], [P2], ...
 
-        Do four things:
+        Your plan is the writer's whole brief: it sees only one scene at a time, so be concrete and specific. Do five things:
 
         1. BEATS. List every beat of the source in order: each thing that happens, is said, is decided, is felt or is learned, including physical and bodily details and small emotional turns ("he is so pleased he forgets to be disappointed"). One line each, with the paragraph range and the cause. The cause comes from the source, from the memory, or is "unknown". Never invent a cause.
 
@@ -39,18 +40,27 @@ object RewritePrompts {
            - anchor: one concrete place detail (from the memory if it holds one)
            - wants: what each character present is after in this scene, and what they leave unsaid or hide, as the source supports it ("none" if nobody wants anything)
            - pace: quiet, building or loud. Mark a scene quiet when it is a breath between bigger moments, an aftermath or a still beat, so it stays understated and the loud scenes land harder
+           - turn: what is different at the end of the scene compared with its start (a decision, a discovery, a shift between two people). This is the scene's point; everything else serves it
+           - dialogue: the lines worth recomposing, with the paragraph and what the speaker means in plain words, separated by ";" ("P12 Ryan: apologises, embarrassed, wants to move on; P15 Lumian: teases them with silly pet names"). Name the stiff or translated ones first. "none" if the scene has no speech
+           - cut: repetition in the source that can go without losing a beat: a fact restated, an explanation given twice, narration that repeats what a line already showed. "none" if nothing repeats. Never list a beat, a fact said once, or a joke's setup
+           - end: the image, action or line the scene should land on, taken from the source's last moment in this scene
+           Never use the "|" character inside a field.
 
         3. FLAGS. Lines that do not fit the speaker's recorded voice (with a hypothesis: lying, disguised, under stress, or someone else), and contradictions between the source and the memory. Write "- none" if there are none.
 
-        4. KEEP. Usually write "- none". Reserve exact wording ONLY when changing the words would break a specific wordplay or a later verbatim quotation/response in this chapter. Copy only the indispensable phrase, not the surrounding dialogue, without quote marks, as one uninterrupted quoted span. Being funny, emotional, formal, memorable or characteristic of a speaker is NOT a reason to freeze a line. Preserve those effects through better wording instead. Never protect awkward translation merely because it sounds distinctive. Exclude thoughts, labels, narration and reported speech.
+        4. VOICES. One line per character who speaks or thinks in this chapter: how they talk, in your own words (register, confidence, how they address others, habits, the kind of English that fits them: slangy, formal, clipped, chatty). Use the source and the memory. Never quote their lines.
+
+        5. KEEP. Usually write "- none". Reserve exact wording ONLY when changing the words would break a specific wordplay or a later verbatim quotation/response in this chapter. Copy only the indispensable phrase, not the surrounding dialogue, without quote marks, as one uninterrupted quoted span. Being funny, emotional, formal, memorable or characteristic of a speaker is NOT a reason to freeze a line. Preserve those effects through better wording instead. Never protect awkward translation merely because it sounds distinctive. Exclude thoughts, labels, narration and reported speech.
 
         Reply in exactly this form, nothing before or after:
         $BEATS
         1. [P1-P2] <beat> | cause: <cause>
         $SCENES
-        S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b> | sharpen: <moment> | anchor: <detail> | wants: <who wants what; what goes unsaid> | pace: <quiet|building|loud>
+        S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b> | sharpen: <moment> | anchor: <detail> | wants: <who wants what; what goes unsaid> | pace: <quiet|building|loud> | turn: <what changes> | dialogue: <P# speaker: intent; ...> | cut: <repetition or none> | end: <landing moment>
         $FLAGS
         - <flag>
+        $VOICES
+        - <Name>: <how they talk>
         $KEEP
         - none
     """.trimIndent()
@@ -59,6 +69,15 @@ object RewritePrompts {
 
     val WRITE = """
         You are a novelist rewriting ONE scene of a web novel so it reads as the best version of itself. Same events, far better telling. Reply with the scene's prose in Markdown and nothing else: no heading, no notes, no commentary.
+
+        HOW TO WRITE THIS SCENE, in this order
+        1. Read the source scene and the brief. Know the scene's turn and its end before you start; every paragraph moves toward them.
+        2. Stage it: who is where, what their hands and bodies are doing, what each of them wants. Use the texture and anchor notes once each, where they matter, not as a list.
+        3. Write each exchange from the voice notes and the dialogue notes: take the speaker's intent and write the line fresh in their kind of English. Do not start from the source's wording.
+        4. Match the pace. Loud scenes get room and weight; quiet scenes stay plain and short.
+        5. Leave out the repetitions the brief marks as cut. Everything else stays.
+        6. Land on the end moment. Stop there; no summary after it.
+        7. Before replying, check: every beat happens; every line sounds like its speaker and not like a translation; none of the machine-written tells below; nothing invented.
 
         CANON, never changed
         - Every beat in the list you are given happens, in that order, with the same outcome. Keep every physical detail and every emotional turn as the source states it. If the source says he forgets to be disappointed, he forgets: do not turn a non-event into an event, or an event into a non-event.
@@ -91,7 +110,7 @@ object RewritePrompts {
         - When a crowd or minor character matters to the moment, give one of them a specific action. Not every crowd needs individuals; never repeat the same kind of bystander beat from scene to scene.
         - Restraint: a quiet scene stays understated, with plain prose, little added detail and room to breathe. Not every moment is loud.
         - Violence and gore at full weight, in plain exact words. Never softened, skipped or summarised.
-        - Use the texture, sharpen, anchor, wants and pace notes you are given.
+        - Follow every note of the brief you are given: texture, sharpen, anchor, wants, pace, turn, dialogue, cut and end.
 
         STYLE
         - Everyday words. Short, clear sentences, with a short one for impact. Rich, never ornate.

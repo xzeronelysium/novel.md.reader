@@ -33,8 +33,6 @@ data class RewriteSettings(
     val model: String = "",
     /** One of the levels the model reports (low, high, max...), or empty for its default. */
     val effort: String = "",
-    /** light / full / max: how far the rewrite may go. */
-    val strength: String = "full",
     /** How many earlier chapters the memory reads before a rewrite; 0 reads from chapter 1. */
     val memoryDepth: Int = 20,
     /** The ChatGPT sign-in, when there is one. */
@@ -103,7 +101,7 @@ data class Rewrite(val chapter: String, val note: String, val sheets: String = "
  * rewrites/<project id>/<hash of chapter path>.md        the revised chapter
  * rewrites/<project id>/<hash of chapter path>.note.md   the continuity note
  * rewrites/<project id>/bible/                            the novel's memory (see [BibleStore])
- * rewrite-settings.json                                  endpoint, sealed key, model, effort, strength
+ * rewrite-settings.json                                  endpoint, sealed key, model, effort
  * ```
  */
 class RewriteStore(private val filesDir: File, private val box: SecretBox = KeystoreSecretBox) {
@@ -121,7 +119,6 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
                 ?: json.optString("apiKey"),
             model = json.optString("model"),
             effort = json.optString("effort"),
-            strength = json.optString("strength", "full").takeIf { it == "max" } ?: "full",
             memoryDepth = json.optInt("memoryDepth", 20).coerceAtLeast(0),
             chatgpt = json.optString("chatgptEnc").takeIf { it.isNotEmpty() }?.let(box::open)?.let(ChatGptCredential::fromJson),
             deviceId = json.optString("deviceId"),
@@ -150,7 +147,6 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
             .put("apiKeyEnc", box.seal(settings.apiKey.trim()))
             .put("model", settings.model.trim())
             .put("effort", settings.effort.trim())
-            .put("strength", settings.strength)
             .put("memoryDepth", settings.memoryDepth)
         val temp = File(filesDir, "${settingsFile.name}.tmp")
         temp.writeText(json.toString())
@@ -226,24 +222,13 @@ object RewriteClient {
     // The default Android agent is refused (403) by the host's firewall.
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     /** Bumped whenever a prompt changes, and stamped into every note, so outputs can be compared. */
-    const val PROMPT_VERSION = "2026-11-03.26"
+    const val PROMPT_VERSION = "2026-11-03.27"
     /**
-     * Floor and ceiling words for [sourceWords], by strength. The ceiling is the real limit; the
-     * floor only catches a scene that dropped content, so a quiet scene may stay short.
+     * Floor and ceiling words for [sourceWords]. The ceiling is the real limit; the floor only
+     * catches a scene that dropped content, so a quiet scene may stay short.
      */
-    internal fun lengthTarget(strength: String, sourceWords: Int): Pair<Int, Int> {
-        val (low, high) = when (strength) {
-            "max" -> 0.9 to 1.6
-            else -> 0.9 to 1.45
-        }
-        return Math.ceil(sourceWords * low).toInt() to Math.ceil(sourceWords * high).toInt()
-    }
-
-    /** How far this run may go; the rest of the prompt is the same for every chapter. */
-    internal fun strengthRule(strength: String): String = when (strength) {
-        "max" -> "STRENGTH: max. Rewrite scenes as deeply as the laws allow: the fullest staging, the sharpest exchanges and violence at full weight where the scene earns it, while keeping every canon rule above. Quiet scenes still stay quiet."
-        else -> "STRENGTH: full. Rewrite each scene so it reads as its best version, keeping every canon rule above."
-    }
+    internal fun lengthTarget(sourceWords: Int): Pair<Int, Int> =
+        Math.ceil(sourceWords * 0.9).toInt() to Math.ceil(sourceWords * 1.45).toInt()
 
     /** The last [n] words of [text], for joining the next chapter to it. */
     fun tailWords(text: String, n: Int = 300): String =

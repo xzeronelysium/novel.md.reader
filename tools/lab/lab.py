@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prompt lab driver: runs on this computer, the rewrites themselves run in the app on the phone.
 
-    tools/lab/lab.py start <run> [--models a,b@high] [--parallel 2] [--strength full]
+    tools/lab/lab.py start <run> [--models a,b@high] [--parallel 2]
     tools/lab/lab.py status <run>
     tools/lab/lab.py pull <run>      # copies files/lab/<run> to ~/mdreader-lab/<run> and scores it
 
@@ -46,8 +46,6 @@ def start(a):
     cmd = ["shell", "am", "start", "-n", f"{PACKAGE}/.LabActivity", "--es", "run", a.run, "--ei", "parallel", str(a.parallel)]
     if a.models:
         cmd += ["--es", "models", a.models]
-    if a.strength:
-        cmd += ["--es", "strength", a.strength]
     if a.chapters:
         cmd += ["--es", "chapters", a.chapters]
     print(adb(*cmd).strip())
@@ -212,7 +210,6 @@ def main():
     s.add_argument("run")
     s.add_argument("--models")
     s.add_argument("--chapters")
-    s.add_argument("--strength")
     s.add_argument("--parallel", type=int, default=2)
     s.set_defaults(fn=start)
     for name, fn in [("status", status), ("pull", pull)]:

@@ -28,10 +28,30 @@ object RewritePipeline {
         val wants: String = "",
         /** quiet, building, loud; or "full" when the plan does not say. */
         val pace: String = "full",
+        /** What is different by the end of the scene: its point. */
+        val turn: String = "",
+        /** The lines to recompose, each with its speaker's intent in plain words. */
+        val dialogue: String = "",
+        /** Repetition in the source that can go without losing a beat. */
+        val cut: String = "",
+        /** The image, action or line the scene lands on. */
+        val end: String = "",
     )
 
     /** [keep]: spoken phrases whose exact wording matters, such as catchphrases and wordplay. */
-    data class Plan(val beats: List<Beat>, val scenes: List<Scene>, val flags: List<String>, val keep: List<String> = emptyList())
+    /** [voices]: how each speaker of the chapter talks, by name, for the scenes they appear in. */
+    data class Plan(
+        val beats: List<Beat>,
+        val scenes: List<Scene>,
+        val flags: List<String>,
+        val keep: List<String> = emptyList(),
+        val voices: Map<String, String> = emptyMap(),
+    )
+
+    /** The voice notes of the people a scene's source mentions by name. */
+    internal fun voicesFor(plan: Plan, source: String): List<String> =
+        plan.voices.filterKeys { name -> Regex("\\b" + Regex.escape(name) + "\\b").containsMatchIn(source) }
+            .map { (name, voice) -> "$name: $voice" }
 
     /** Source paragraphs, as the analysis numbers them. */
     fun paragraphs(markdown: String): List<String> =
@@ -79,13 +99,21 @@ object RewritePipeline {
             val source = paras.subList(scene.from - 1, scene.to).joinToString("\n\n")
             val beats = plan.beats.filter { it.from in scene.from..scene.to }
             val keep = plan.keep.filter { Fidelity.containsQuotedWording(source, it) }
-            val (minWords, maxWords) = RewriteClient.lengthTarget(settings.strength, Fidelity.wordCount(source))
+            val (minWords, maxWords) = RewriteClient.lengthTarget(Fidelity.wordCount(source))
             val before = if (i == 0) previousTail?.let { "END OF THE PREVIOUS CHAPTER (pick up from it, do not repeat it):\n$it" }
             else "THE SCENE JUST BEFORE ENDS (continue from it, do not repeat it):\n" + RewriteClient.tailWords(written.last(), 150)
             val user = buildString {
                 append(memory)
                 if (before != null) append(before).append("\n\n")
-                append("PLAN FOR THIS SCENE: type ${scene.type}; register ${scene.register}; texture ${scene.texture}; sharpen ${scene.sharpen}; anchor ${scene.anchor}; wants ${scene.wants}; pace ${scene.pace}\n\n")
+                append("BRIEF FOR THIS SCENE\n")
+                listOf(
+                    "type" to scene.type, "register" to scene.register, "pace" to scene.pace, "turn" to scene.turn,
+                    "wants" to scene.wants, "dialogue" to scene.dialogue, "sharpen" to scene.sharpen,
+                    "texture" to scene.texture, "anchor" to scene.anchor, "cut" to scene.cut, "end" to scene.end,
+                ).filter { it.second.isNotBlank() }.forEach { (k, v) -> append("- $k: $v\n") }
+                append("\n")
+                val voices = voicesFor(plan, source)
+                if (voices.isNotEmpty()) append("VOICES (write each person's lines in this voice):\n").append(voices.joinToString("\n") { "- $it" }).append("\n\n")
                 if (beats.isNotEmpty()) append("BEATS THAT MUST HAPPEN, IN ORDER:\n").append(beats.joinToString("\n") { "- ${it.text} (cause: ${it.cause})" }).append("\n\n")
                 if (keep.isNotEmpty()) append("PROTECTED PHRASES (retain wording in the source's original context and role; other wording may improve. If the plan selected a thought or label, keep it as such, never force it into speech):\n").append(keep.joinToString("\n") { "- $it" }).append("\n\n")
                 if (i > 0) append("If this scene opens at a new time or place compared with the scene before, start it with a line containing only ---.\n\n")
@@ -95,7 +123,7 @@ object RewritePipeline {
                 append("LENGTH: the source scene has ${Fidelity.wordCount(source)} words. Use what the scene needs, at most about $maxWords; a quiet scene may stay close to the source's length.\n\n")
                 append("SOURCE SCENE (Ch $number, $title):\n\n").append(source)
             }
-            val system = RewritePrompts.WRITE + "\n\n" + (RewritePrompts.METHODS[scene.type] ?: "") + "\n\n" + RewriteClient.strengthRule(settings.strength)
+            val system = RewritePrompts.WRITE + "\n\n" + (RewritePrompts.METHODS[scene.type] ?: "")
 
             var draft = clean(RewriteClient.stream(settings, system, user, onProgress, RewriteClient.CREATIVE))
             val previousScene = written.lastOrNull().orEmpty()
@@ -144,12 +172,13 @@ object RewritePipeline {
             if (noteBody.isNotEmpty()) append("\n\n").append(noteBody)
             append("\n## Voice flags and conflicts\n").append(plan.flags.ifEmpty { listOf("none") }.joinToString("\n") { "- $it" })
             append("\n\n## Enhancement plan\n")
-            append(plan.scenes.withIndex().joinToString("\n") { (i, s) -> "S${i + 1} | P${s.from}-P${s.to} | ${s.type} | ${s.register} | ${s.texture} | ${s.sharpen} | ${s.anchor} | ${s.wants} | ${s.pace}" })
+            append(plan.scenes.withIndex().joinToString("\n") { (i, s) -> "S${i + 1} | P${s.from}-P${s.to} | ${s.type} | ${s.register} | ${s.texture} | ${s.sharpen} | ${s.anchor} | ${s.wants} | ${s.pace} | ${s.turn} | ${s.dialogue} | ${s.cut} | ${s.end}" })
+            if (plan.voices.isNotEmpty()) append("\n\n## Voices\n").append(plan.voices.entries.joinToString("\n") { "- ${it.key}: ${it.value}" })
             if (plan.keep.isNotEmpty()) append("\n\n## Protected dialogue\n").append(plan.keep.joinToString("\n") { "- $it" })
             if (warnings.isNotEmpty()) append("\n\n## Fidelity warnings\n").append(warnings.joinToString("\n") { "- $it" })
             append("\n\n## Run\n- prompt ${RewriteClient.PROMPT_VERSION}\n- model ${settings.model}")
             if (settings.effort.isNotBlank()) append(" (effort ${settings.effort})")
-            append("\n- strength ${settings.strength}\n- scenes ${plan.scenes.size}, repairs $repairs")
+            append("\n- scenes ${plan.scenes.size}, repairs $repairs")
         }
         return Rewrite(chapter, note, sheetUpdates)
     }
@@ -167,7 +196,7 @@ object RewritePipeline {
         }
         val range = Regex("""\[?P(\d+)(?:\s*[-–]\s*P?(\d+))?\]?""")
 
-        val beats = section(RewritePrompts.BEATS, RewritePrompts.SCENES, RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().mapNotNull { line ->
+        val beats = section(RewritePrompts.BEATS, RewritePrompts.SCENES, RewritePrompts.FLAGS, RewritePrompts.KEEP, RewritePrompts.VOICES).lines().mapNotNull { line ->
             val body = Regex("""^\s*\d+[.)]\s*(.+)""").find(line)?.groupValues?.get(1) ?: return@mapNotNull null
             val r = range.find(body)
             val from = r?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(1, maxOf(n, 1)) ?: return@mapNotNull null
@@ -176,7 +205,7 @@ object RewritePipeline {
             Beat(from, to, rest.substringBefore("| cause:").substringBefore("|").trim(), rest.substringAfter("cause:", "").trim())
         }
 
-        val scenes = section(RewritePrompts.SCENES, RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().mapNotNull { line ->
+        val scenes = section(RewritePrompts.SCENES, RewritePrompts.FLAGS, RewritePrompts.KEEP, RewritePrompts.VOICES).lines().mapNotNull { line ->
             if (!line.trim().startsWith("S", ignoreCase = true)) return@mapNotNull null
             val parts = line.split('|').map { it.trim() }
             val r = parts.firstNotNullOfOrNull { range.find(it)?.takeIf { m -> it.startsWith("P") || it.startsWith("[P") } } ?: return@mapNotNull null
@@ -185,15 +214,22 @@ object RewritePipeline {
             fun field(name: String) = parts.firstOrNull { it.startsWith("$name:", ignoreCase = true) }?.substringAfter(':')?.trim().orEmpty()
             Scene(from, to, field("type").lowercase().takeIf { it in RewritePrompts.METHODS } ?: "inner",
                 field("register"), field("texture"), field("sharpen"), field("anchor"), field("wants"),
-                field("pace").lowercase().takeIf { it in setOf("quiet", "building", "loud") } ?: "full")
+                field("pace").lowercase().takeIf { it in setOf("quiet", "building", "loud") } ?: "full",
+                field("turn"), field("dialogue"), field("cut"), field("end"))
         }
 
-        val flags = section(RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().map { it.trim() }
+        val flags = section(RewritePrompts.FLAGS, RewritePrompts.KEEP, RewritePrompts.VOICES).lines().map { it.trim() }
             .filter { it.startsWith("- ") && !it.removePrefix("- ").trim().equals("none", true) }
             .map { it.removePrefix("- ").trim() }
         // Only lines the source really prints: a "keep" line the model misquoted would be impossible to meet.
         val sourceText = paras.joinToString("\n\n")
-        val keep = section(RewritePrompts.KEEP).lines().map { it.trim() }
+        val voices = section(RewritePrompts.VOICES).lines().map { it.trim().removePrefix("- ").trim() }
+            .mapNotNull { line ->
+                val name = line.substringBefore(':', "").trim()
+                val voice = line.substringAfter(':', "").trim()
+                if (name.isEmpty() || voice.isEmpty() || name.split(' ').size > 4) null else name to voice
+            }.toMap()
+        val keep = section(RewritePrompts.KEEP, RewritePrompts.VOICES).lines().map { it.trim() }
             .filter { it.startsWith("- ") }
             .map { it.removePrefix("- ").trim().removeSurrounding("\"").removeSurrounding("“", "”")
                 .removeSurrounding("'").removeSurrounding("‘", "’").trim() }
@@ -202,7 +238,7 @@ object RewritePipeline {
 
         val valid = scenes.isNotEmpty() && scenes.first().from == 1 && scenes.last().to == n &&
             scenes.zipWithNext().all { (a, b) -> b.from == a.to + 1 } && scenes.all { it.from <= it.to }
-        return Plan(beats, if (valid) balance(scenes, paras) else fallbackPlan(paras).scenes, flags, keep)
+        return Plan(beats, if (valid) balance(scenes, paras) else fallbackPlan(paras).scenes, flags, keep, voices)
     }
 
     /** Scenes in ~600-word chunks at paragraph boundaries, when the analysis is unusable. */

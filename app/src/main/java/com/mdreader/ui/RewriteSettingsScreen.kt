@@ -309,25 +309,6 @@ fun RewriteSettingsScreen(
                 }
 
                 Fold(
-                    title = "Strength",
-                    value = settings.strength.replaceFirstChar(Char::uppercase),
-                    open = "strength" in open,
-                    onToggle = { toggle("strength") },
-                ) {
-                    Segmented(
-                        options = listOf("full" to "Full", "max" to "Max"),
-                        selected = settings.strength,
-                        onSelect = { update(settings.copy(strength = it)) },
-                    )
-                    Note(
-                        when (settings.strength) {
-                            "max" -> "Deepest rewrite. Up to 1.6 times the source length."
-                            else -> "Full rewrite. Up to 1.45 times the source length."
-                        },
-                    )
-                }
-
-                Fold(
                     title = "Memory",
                     value = when (settings.memoryDepth) {
                         0 -> "From chapter 1"
@@ -471,7 +452,6 @@ private fun StatusCard(
         Spacer(Modifier.height(10.dp))
         StatusLine("Service", if (settings.isChatGpt) "ChatGPT" else "Ollama Cloud")
         StatusLine("Model", settings.model.ifBlank { "—" })
-        StatusLine("Strength", settings.strength.replaceFirstChar(Char::uppercase))
         if (settings.effort.isNotBlank()) StatusLine("Effort", settings.effort.replaceFirstChar(Char::uppercase))
         StatusLine(
             "Memory · this novel",

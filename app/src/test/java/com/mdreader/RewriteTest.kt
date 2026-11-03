@@ -40,10 +40,9 @@ class RewriteTest {
         assert(ctx.contains("scarred left hand") && !ctx.contains("loves tea") && !ctx.contains("roots glow"))
     }
 
-    @Test fun lengthTargetsFollowStrength() {
+    @Test fun lengthHasALowFloorAndACeiling() {
         // A floor only against dropped content; the ceiling is the real limit.
-        assertEquals(900 to 1450, RewriteClient.lengthTarget("full", 1000))
-        assertEquals(900 to 1600, RewriteClient.lengthTarget("max", 1000))
+        assertEquals(900 to 1450, RewriteClient.lengthTarget(1000))
     }
 
     @Test fun carryNoteDropsBookkeeping() {
@@ -75,6 +74,21 @@ class RewriteTest {
         assertEquals("quiet", plan.scenes[1].pace)
         assertEquals("full", plan.scenes[0].pace)
         assertEquals(0, plan.flags.size)
+    }
+
+    @Test fun theDetailedSceneBriefAndVoicesAreRead() {
+        val paras = List(4) { "word ".repeat(150).trim() }
+        val raw = "=== SCENES ===\nS1 | P1-P4 | type: dialogue | turn: Ryan trusts Lumian | dialogue: P2 Ryan apologises, stiff and formal; P3 Lumian teases | cut: P4 repeats the shepherd fact | end: Ryan nods at the door\n" +
+            "=== FLAGS ===\n- none\n=== KEEP ===\n- none\n=== VOICES ===\n- Lumian: cocky village prankster, quick and teasing\n- Ryan: stiff, polite foreigner\n- none"
+        val plan = RewritePipeline.parsePlan(raw, paras)
+        val scene = plan.scenes.single()
+        assertEquals("Ryan trusts Lumian", scene.turn)
+        assertEquals("P2 Ryan apologises, stiff and formal; P3 Lumian teases", scene.dialogue)
+        assertEquals("P4 repeats the shepherd fact", scene.cut)
+        assertEquals("Ryan nods at the door", scene.end)
+        assertEquals(mapOf("Lumian" to "cocky village prankster, quick and teasing", "Ryan" to "stiff, polite foreigner"), plan.voices)
+        // Only the people in a scene's source get their voice note.
+        assertEquals(listOf("Ryan: stiff, polite foreigner"), RewritePipeline.voicesFor(plan, "Ryan bowed."))
     }
 
     @Test fun brokenScenesFallBackToChunks() {
@@ -275,10 +289,9 @@ class RewriteTest {
     @Test fun keyIsSealedOnDisk() {
         val dir = tmp.newFolder()
         val store = RewriteStore(dir, PlainBox)
-        store.saveSettings(com.mdreader.data.RewriteSettings(apiKey = "sk-secret", model = "m", strength = "max", memoryDepth = 0))
+        store.saveSettings(com.mdreader.data.RewriteSettings(apiKey = "sk-secret", model = "m", memoryDepth = 0))
         assertEquals(false, java.io.File(dir, "rewrite-settings.json").readText().contains("sk-secret"))
         assertEquals("sk-secret", store.settings().apiKey)
-        assertEquals("max", store.settings().strength)
         assertEquals(0, store.settings().memoryDepth)
     }
 

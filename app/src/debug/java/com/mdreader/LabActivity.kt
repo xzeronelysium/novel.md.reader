@@ -67,7 +67,6 @@ class LabActivity : ComponentActivity() {
         val models = (intent.getStringExtra("models") ?: DEFAULT_MODELS).split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val chapters = (intent.getStringExtra("chapters") ?: DEFAULT_CHAPTERS).split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val parallel = intent.getIntExtra("parallel", 2).coerceIn(1, 6)
-        val strength = intent.getStringExtra("strength")
 
         // `--ez chatgptmodels true` logs what each ChatGPT model source answers, with the saved sign-in.
         if (intent.getBooleanExtra("chatgptmodels", false)) {
@@ -137,7 +136,7 @@ class LabActivity : ComponentActivity() {
         setContent {
             MDReaderTheme {
                 val state = rememberLazyListState()
-                LaunchedEffect(Unit) { runLab(run, models, chapters, parallel, strength) }
+                LaunchedEffect(Unit) { runLab(run, models, chapters, parallel) }
                 LaunchedEffect(log.size) { if (log.isNotEmpty()) state.scrollToItem(log.lastIndex) }
                 LazyColumn(
                     state = state,
@@ -158,7 +157,7 @@ class LabActivity : ComponentActivity() {
         android.util.Log.i("MDReaderLab", line)
     }
 
-    private suspend fun runLab(run: String, models: List<String>, refs: List<String>, parallel: Int, strength: String?) {
+    private suspend fun runLab(run: String, models: List<String>, refs: List<String>, parallel: Int) {
         val dir = File(filesDir, "lab/$run").apply { mkdirs() }
         val results = File(dir, "results.jsonl")
         val store = LibraryStore(this)
@@ -203,7 +202,7 @@ class LabActivity : ComponentActivity() {
                     gate.withPermit {
                         val model = spec.substringBefore('@')
                         val effort = spec.substringAfter('@', "")
-                        val settings = base.copy(model = model, effort = effort, strength = strength ?: base.strength)
+                        val settings = base.copy(model = model, effort = effort)
                         val out = File(dir, Vault.safeTitle(spec).replace(' ', '_')).apply { mkdirs() }
                         val started = SystemClock.elapsedRealtime()
                         var passes = 1
