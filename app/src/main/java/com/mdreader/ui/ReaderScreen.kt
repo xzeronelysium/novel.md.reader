@@ -115,6 +115,11 @@ fun ReaderScreen(
     var rewriteJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showRewriteSettings by remember { mutableStateOf(false) }
     var pendingRestore by remember(project.id) { mutableStateOf(startProgress) }
+    // Each tab keeps its own place in the open chapter: (first visible item, its offset).
+    var originalPos by remember(project.id) { mutableStateOf(0 to 0) }
+    var rewritePos by remember(project.id) { mutableStateOf(0 to 0) }
+    // Set once the open chapter's saved rewrite has been looked up, so restoring can pick the tab.
+    var rewriteChecked by remember(project.id) { mutableStateOf(false) }
     var attempt by remember(project.id) { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val chapterPercent by remember(listState) {
@@ -187,6 +192,9 @@ fun ReaderScreen(
 
     LaunchedEffect(project.id, index) {
         showRewrite = false
+        rewriteChecked = false
+        originalPos = 0 to 0
+        rewritePos = 0 to 0
         rewriteError = null
         val chapter = chapters.getOrNull(index)
         rewriteBlocks = chapter?.let {
@@ -198,6 +206,7 @@ fun ReaderScreen(
                 }.getOrNull()
             }
         }
+        rewriteChecked = true
     }
 
     fun startRewrite() {
@@ -275,8 +284,12 @@ fun ReaderScreen(
                 val parsed = MarkdownParser.parse(result.chapter, markdown = true).withoutOpeningTitle(chapter.title)
                 // The reader may have moved on while the answer was coming back.
                 if (chapters.getOrNull(index) == chapter) {
+                    if (!showRewrite) originalPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
                     rewriteBlocks = parsed
                     showRewrite = true
+                    // A fresh rewrite is read from its start.
+                    rewritePos = 0 to 0
+                    listState.scrollToItem(0)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -291,38 +304,57 @@ fun ReaderScreen(
     }
 
     // Restore the saved scroll position once per visit, otherwise start at the top.
-    LaunchedEffect(blocks) {
-        if (blocks.isEmpty()) return@LaunchedEffect
+    // Waits for the rewrite lookup too, so a chapter last read in the rewrite reopens there.
+    LaunchedEffect(blocks, rewriteChecked) {
+        if (blocks.isEmpty() || !rewriteChecked) return@LaunchedEffect
         val restore = pendingRestore
         if (restore != null && restore.chapterIndex == index) {
-            listState.scrollToItem(
-                index = restore.scrollIndex.coerceIn(0, blocks.lastIndex),
-                scrollOffset = restore.scrollOffset.coerceAtLeast(0),
-            )
             pendingRestore = null
+            originalPos = restore.scrollIndex to restore.scrollOffset
+            val rewritten = rewriteBlocks
+            if (rewritten != null) rewritePos = restore.rewriteIndex to restore.rewriteOffset
+            showRewrite = restore.rewritten && rewritten != null
+            val (item, offset) = if (showRewrite) rewritePos else originalPos
+            val last = (if (showRewrite) rewritten!! else blocks).lastIndex
+            listState.scrollToItem(item.coerceIn(0, last.coerceAtLeast(0)), offset.coerceAtLeast(0))
         } else {
             listState.scrollToItem(0)
         }
     }
 
+    /** The open chapter's place in both tabs, the one on screen read live from the list. */
+    fun currentProgress(): Progress {
+        val here = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        val original = if (showRewrite) originalPos else here
+        val rewrite = if (showRewrite) here else rewritePos
+        return Progress(
+            index, original.first, original.second, chapters.getOrNull(index)?.uri,
+            rewritten = showRewrite, rewriteIndex = rewrite.first, rewriteOffset = rewrite.second,
+        )
+    }
+
+    /** Switches tab, remembering where this one was left and returning to where the other was. */
+    fun switchTab(toRewrite: Boolean) {
+        if (showRewrite == toRewrite) return
+        val here = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        if (showRewrite) rewritePos = here else originalPos = here
+        showRewrite = toRewrite
+        val (item, offset) = if (toRewrite) rewritePos else originalPos
+        scope.launch { listState.scrollToItem(item, offset) }
+    }
+
     LaunchedEffect(project.id, index) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+        snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, showRewrite) }
             .debounce(500)
-            .collect { (scrollIndex, scrollOffset) ->
-                // Ignore positions from the previous chapter while the new one loads.
-                if (!loading) onProgress(Progress(index, scrollIndex, scrollOffset, chapters.getOrNull(index)?.uri))
+            .collect {
+                // Ignore positions from the previous chapter while the new one loads, and before
+                // the saved place has been restored (it would overwrite it with the top).
+                if (!loading && rewriteChecked && pendingRestore?.chapterIndex != index) onProgress(currentProgress())
             }
     }
 
     fun saveAndLeave() {
-        onProgress(
-            Progress(
-                index,
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
-                chapters.getOrNull(index)?.uri,
-            )
-        )
+        onProgress(currentProgress())
         onBack()
     }
 
@@ -363,20 +395,12 @@ fun ReaderScreen(
             onOriginal = {
                 // Back to the original also puts away a failed rewrite's message.
                 rewriteError = null
-                if (showRewrite) {
-                    showRewrite = false
-                    scope.launch { listState.scrollToItem(0) }
-                }
+                switchTab(toRewrite = false)
             },
             onRewritten = {
                 when {
                     rewriting -> Unit
-                    rewriteBlocks != null -> {
-                        if (!showRewrite) {
-                            showRewrite = true
-                            scope.launch { listState.scrollToItem(0) }
-                        }
-                    }
+                    rewriteBlocks != null -> switchTab(toRewrite = true)
                     else -> startRewrite()
                 }
             },

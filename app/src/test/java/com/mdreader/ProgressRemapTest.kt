@@ -27,6 +27,20 @@ class ProgressRemapTest {
     }
 
     @Test
+    fun `each tab keeps its own position through a list refresh`() {
+        val saved = Progress(1, 4, 20, chapterKey = "b", rewritten = true, rewriteIndex = 9, rewriteOffset = 5)
+        val remapped = saved.remapTo(list("x", "a", "b"))
+        assertEquals(true, remapped.rewritten)
+        assertEquals(4, remapped.scrollIndex)
+        assertEquals(9, remapped.rewriteIndex)
+        assertEquals(5, remapped.rewriteOffset)
+        // A vanished chapter forgets both positions and goes back to the original.
+        val lost = saved.remapTo(list("a", "c"))
+        assertEquals(false, lost.rewritten)
+        assertEquals(0, lost.rewriteIndex)
+    }
+
+    @Test
     fun `a vanished chapter falls back to its index and forgets the scroll position`() {
         val remapped = Progress(2, 7, 9, chapterKey = "gone").remapTo(list("a", "b", "c"))
         assertEquals(2, remapped.chapterIndex)

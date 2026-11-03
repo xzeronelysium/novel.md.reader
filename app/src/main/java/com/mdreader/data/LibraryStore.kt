@@ -110,6 +110,9 @@ class LibraryStore(context: Context) {
                     scrollOffset = value.optInt("scrollOffset", 0),
                     chapterKey = value.optString("chapterKey").ifEmpty { null },
                     updatedAt = value.optLong("updatedAt", 0L),
+                    rewritten = value.optBoolean("rewritten", false),
+                    rewriteIndex = value.optInt("rewriteIndex", 0),
+                    rewriteOffset = value.optInt("rewriteOffset", 0),
                 )
             }
 
@@ -191,6 +194,9 @@ class LibraryStore(context: Context) {
                     .put("scrollOffset", progress.scrollOffset)
                     .apply { progress.chapterKey?.let { put("chapterKey", it) } }
                     .put("updatedAt", progress.updatedAt)
+                    .put("rewritten", progress.rewritten)
+                    .put("rewriteIndex", progress.rewriteIndex)
+                    .put("rewriteOffset", progress.rewriteOffset)
             )
         }
         root.put("progress", progressObject)

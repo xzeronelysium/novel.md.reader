@@ -64,6 +64,11 @@ data class Progress(
     val chapterKey: String? = null,
     /** When this position was saved; the most recent one is the novel to continue. */
     val updatedAt: Long = 0,
+    /** Whether the rewrite was the tab being read; [scrollIndex]/[scrollOffset] stay the original's. */
+    val rewritten: Boolean = false,
+    /** Where the rewrite tab was left, kept apart from the original's position. */
+    val rewriteIndex: Int = 0,
+    val rewriteOffset: Int = 0,
 )
 
 /**
