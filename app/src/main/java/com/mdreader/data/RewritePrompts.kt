@@ -30,7 +30,7 @@ object RewritePrompts {
 
         Your plan is the writer's whole brief: it sees only one scene at a time, so be concrete and specific. Do five things:
 
-        1. BEATS. List every beat of the source in order: each thing that happens, is said, is decided, is felt or is learned, including physical and bodily details and small emotional turns ("he is so pleased he forgets to be disappointed"). One line each, with the paragraph range and the cause. The cause comes from the source, from the memory, or is "unknown". Never invent a cause.
+        1. BEATS. List every beat of the source in order: each thing that happens, is said, is decided, is felt or is learned, including physical and bodily details and small emotional turns ("he is so pleased he forgets to be disappointed"). A fact a character states or remembers about the past is its own beat (a death, a betrayal, a debt, who did what to whom), even inside a long speech or a thought, so the writer cannot drop it. One line each, with the paragraph range and the cause. The cause comes from the source, from the memory, or is "unknown". Never invent a cause.
 
         2. SCENES. Split the chapter into scenes of roughly 300 to 900 source words, at natural turns (place, time, focus or mood changes). Scenes cover every paragraph exactly once, in order. For each scene give:
            - type: one of action, dialogue, inner, comedy, system, crowd, travel
@@ -41,7 +41,7 @@ object RewritePrompts {
            - wants: what each character present is after in this scene, and what they leave unsaid or hide, as the source supports it ("none" if nobody wants anything)
            - pace: quiet, building or loud. Mark a scene quiet when it is a breath between bigger moments, an aftermath or a still beat, so it stays understated and the loud scenes land harder
            - turn: what is different at the end of the scene compared with its start (a decision, a discovery, a shift between two people). This is the scene's point; everything else serves it
-           - dialogue: the lines worth recomposing, with the paragraph and what the speaker means in plain words, separated by ";" ("P12 Ryan: apologises, embarrassed, wants to move on; P15 Lumian: teases them with silly pet names"). Name the stiff or translated ones first. "none" if the scene has no speech
+           - dialogue: the spoken lines that read stiff, long-winded, over-formal or translated, and each one's natural version. For each give the paragraph, the speaker, what they mean in plain words, then "=>" and the line as that person would really say it out loud. The natural version must NOT follow the source's sentence shape: say what they mean in plainer words, with contractions and pronouns, in the speaker's own register (a rough fighter, a tired clerk, a formal elder). Plainer is not the same as shorter: it keeps EVERY fact of the original (who died, who did what to whom, who gave or paid, every number, request, refusal and reason), says a vague fact as vaguely as the source does, and leaves every name and foreign or invented term exactly as the source prints it. Separate lines with ";" and never use ";" or "|" inside a line. Example: "P12 Ryan: apologises, embarrassed, wants to move on => Sorry, I got carried away; P15 Lumian: teases them with silly pet names => Look at you two, so serious". List the stiffest lines first and skip lines that already sound natural. "none" if the scene has no speech or none of it is stiff
            - cut: repetition in the source that can go without losing a beat: a fact restated, an explanation given twice, narration that repeats what a line already showed. "none" if nothing repeats. Never list a beat, a fact said once, or a joke's setup
            - end: the image, action or line the scene should land on, taken from the source's last moment in this scene
            Never use the "|" character inside a field.
@@ -56,7 +56,7 @@ object RewritePrompts {
         $BEATS
         1. [P1-P2] <beat> | cause: <cause>
         $SCENES
-        S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b> | sharpen: <moment> | anchor: <detail> | wants: <who wants what; what goes unsaid> | pace: <quiet|building|loud> | turn: <what changes> | dialogue: <P# speaker: intent; ...> | cut: <repetition or none> | end: <landing moment>
+        S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b> | sharpen: <moment> | anchor: <detail> | wants: <who wants what; what goes unsaid> | pace: <quiet|building|loud> | turn: <what changes> | dialogue: <P# speaker: meaning => natural line; ...> | cut: <repetition or none> | end: <landing moment>
         $FLAGS
         - <flag>
         $VOICES
@@ -73,17 +73,19 @@ object RewritePrompts {
         HOW TO WRITE IT
         1. Read the source scene and the brief. Know the scene's turn and its end before you start; every paragraph moves toward them.
         2. Stage it: who is where, what their hands and bodies are doing, what each of them wants. Use the texture and anchor notes once each, where they matter.
-        3. Write each exchange fresh from the speaker's intent and voice note, in their kind of English. Do not start from the source's wording.
+        3. Write each exchange from the voice notes and the dialogue notes. For a line the brief gives a natural version of (after "=>"), start from that version and fit it to the moment; for any other stiff line, make one yourself the same way. Do not start from the source's wording.
         4. Match the pace: loud scenes get room and weight, quiet scenes stay plain and short.
         5. Leave out only what the brief marks as cut. Land on the end moment and stop; no summary after it.
 
         DIALOGUE
-        Most of the quality is here. Source dialogue is often stiff, over-explained or badly translated. Understand what the speaker means, what they want from the listener and how much pressure they are under, then write how THIS person would say it. Change the sentences themselves: word choice, construction, rhythm, emphasis. A line copied with new punctuation, a new tag or an added gesture is not a rewrite.
+        Most of the quality is here. Source dialogue is often stiff, over-explained or badly translated. Understand what the speaker means, what they want from the listener and how much pressure they are under, then write how THIS person would say it. Change the sentences themselves: word choice, construction, rhythm, emphasis. A line copied with new punctuation, a new tag or an added gesture is not a rewrite. The commonest failure is keeping the source's sentence skeleton and only adding contractions. Test each stiff line: cover the source, say what the person means to a friend in one breath, and write that. People say less than prose does: they drop filler like "seems to be" and "it is that", use pronouns instead of repeating nouns, and split one long report into short sentences. Cut the padding, never a fact: list the facts of the source line first (who, did what, to whom, why) and check that each is still in yours.
         - Natural English: contractions, clipped replies, fragments, interruptions, idioms. A street kid or soldier uses slang and swears; a merchant is chatty; a noble or elder is formal but fluent; a scholar is precise; friends tease and talk over each other. Slang must fit the world (a sect disciple says "Get lost", not "bro"). The cast must never sound alike. Thoughts follow the same rule: people think the way they talk.
         - Avoid translated stiffness: "It is that...", "This one...", "Do you dare...", needless "indeed", explanations nobody says aloud, unless a speaker's formality is the point.
         - Keep ordinary short replies and lines that already work. Keep jokes with their setups and punchlines, sarcasm, deliberate slips and self-corrections, and hesitation or evasion the source has.
         - Mostly "said", or no tag with an action beat. Each speaker's line starts its own paragraph.
         - Keep spoken words spoken and thoughts internal; muttered or whispered words are still spoken.
+
+        Skeleton failure, same meaning: "We came to visit the blacksmith Garrick, but he seems to be absent from both his forge and his house." is NOT fixed by "We came to visit the blacksmith Garrick, but he seems to be absent from his forge and his house." Fixed: "We're looking for Garrick, the blacksmith. He's not at the forge, and he's not home."
 
         Example. Source: "Brother Wen, I beg you to lend me your assistance this time," the young man said with an anxious face. "It is not that I do not want to help you," Wen said. "But the amount you are requesting is too large. I do not possess such an amount of silver." "Then how about half of it?" "Even half, I cannot." The young man bowed deeply and did not speak anymore.
         Rewritten:
@@ -146,7 +148,8 @@ object RewritePrompts {
         HARD RULES. These override everything above.
         - Every beat in the list you are given happens, in that order, with the same outcome. Keep every physical detail and emotional turn as the source states it: if he forgets to be disappointed, he forgets. Never turn a non-event into an event or the reverse.
         - What each line says stays fixed: every piece of information, claim, request, refusal, lie and promise, who says it, to whom, its place in the exchange and its effect on the listener. Read clumsy grammar in context so a clearer sentence does not reverse a negation, doubt or attitude. Do not invent a definite speaker where the source is unclear.
-        - Names, ranks, abilities, numbers, items and system text stay as the source has them. Invent no names, titles, techniques, nicknames or labels.
+        - Names, ranks, abilities, numbers, items and system text stay as the source has them. Invent no names, titles, techniques, nicknames or labels. Never translate or explain a name or a foreign or invented term (a drink called Eau Noire stays Eau Noire, never "Black Water").
+        - Never make a vague fact specific. If the source says someone received a free drink, they were not "bought" one by a named person; if it says an expert saved him, no technique or injury detail is added. Never drop a fact either: a death, a debt, a reason or a number said once still appears once.
         - Named characters gain no new claims, knowledge, commitments or exchanges. New dialogue goes only to unnamed bystanders, as inconsequential texture. Reported speech stays reported.
         - Phrases you are told to keep word for word keep their exact wording and role. If the plan mistakenly selected a thought or label, keep it internal or as a label.
         - People know only what they have learned. Places, wounds and objects stay as the memory left them. Nothing from later chapters; ambiguity stays ambiguous. Causes come from the brief: if a cause is unknown, do not make one up.
