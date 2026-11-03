@@ -52,8 +52,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mdreader.data.RewriteClient
-import com.mdreader.data.ChatGptSignIn
-import com.mdreader.data.ChatGptTokens
 import com.mdreader.data.RewriteSettings
 import kotlinx.coroutines.launch
 
@@ -86,11 +84,6 @@ fun RewriteSettingsScreen(
     var memory by remember { mutableIntStateOf(memoryChapters) }
     var readSoFar by remember { mutableStateOf(earlierRead) }
     var confirmRebuild by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    // A ChatGPT sign-in in progress, the job waiting on it, and a pasted address to finish it by hand.
-    var signIn by remember { mutableStateOf<ChatGptSignIn?>(null) }
-    var signInJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    var pasted by remember { mutableStateOf("") }
     // What is unfinished opens by itself; the rest waits for a tap.
     var open by remember {
         mutableStateOf(
@@ -111,11 +104,7 @@ fun RewriteSettingsScreen(
     }
 
     suspend fun effortsOf(current: RewriteSettings, id: String): List<String> =
-        if (current.isChatGpt) {
-            runCatching { RewriteClient.chatGptEfforts(current.chatgpt!!, id) }.getOrDefault(emptyList())
-        } else {
-            RewriteClient.efforts(current.baseUrl, current.apiKey, id)
-        }
+        RewriteClient.efforts(current.baseUrl, current.apiKey, id)
 
     fun loadModels() {
         status = "Connecting"
@@ -123,13 +112,11 @@ fun RewriteSettingsScreen(
         scope.launch {
             val current = settings
             runCatching {
-                if (current.isChatGpt) RewriteClient.chatGptModels(current.chatgpt!!) else RewriteClient.models(current.baseUrl, current.apiKey)
+                RewriteClient.models(current.baseUrl, current.apiKey)
             }.fold(
                 onSuccess = { list ->
                     models = list
                     status = "Connected · ${list.size} models"
-                    // ChatGPT's list carries each model's levels, so read them once it has arrived.
-                    if (settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
                 },
                 onFailure = {
                     statusFailed = true
@@ -148,50 +135,10 @@ fun RewriteSettingsScreen(
         scope.launch { efforts = effortsOf(current, id) }
     }
 
-    /** Ollama Cloud and ChatGPT have different models, so switching starts the choice afresh. */
-    fun switchTo(provider: String) {
-        if (provider == settings.provider) return
-        update(settings.copy(provider = provider, model = "", effort = ""))
-        models = emptyList()
-        efforts = emptyList()
-        status = null
-        statusFailed = false
-        if (settings.signedIn) loadModels()
-    }
-
-    fun startSignIn() {
-        statusFailed = false
-        pasted = ""
-        signInJob = scope.launch {
-            try {
-                val attempt = ChatGptSignIn(settings.deviceId)
-                signIn = attempt
-                context.startActivity(
-                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(attempt.url))
-                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-                val grant = attempt.await()
-                ChatGptTokens.forget()
-                update(settings.copy(chatgpt = grant))
-                status = null
-                loadModels()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                statusFailed = true
-                status = e.message ?: "ChatGPT sign-in failed"
-            } finally {
-                signIn?.close()
-                signIn = null
-                signInJob = null
-            }
-        }
-    }
-
     LaunchedEffect(Unit) {
         if (settings.signedIn) {
             loadModels()
-            if (!settings.isChatGpt && settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
+            if (settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
         }
     }
 
@@ -285,7 +232,6 @@ fun RewriteSettingsScreen(
                         if (shown.isEmpty()) {
                             Micro(
                                 text = when {
-                                    !settings.signedIn && settings.isChatGpt -> "Sign in with ChatGPT under Connection first"
                                     !settings.signedIn -> "Add the API key under Connection first"
                                     else -> "No model matches"
                                 },
@@ -345,49 +291,10 @@ fun RewriteSettingsScreen(
 
                 Fold(
                     title = "Connection",
-                    value = if (settings.isChatGpt) "ChatGPT" else "Ollama Cloud",
+                    value = "Ollama Cloud",
                     open = "connection" in open,
                     onToggle = { toggle("connection") },
                 ) {
-                    Segmented(
-                        options = listOf(RewriteSettings.OLLAMA to "Ollama Cloud", RewriteSettings.CHATGPT to "ChatGPT"),
-                        selected = settings.provider,
-                        onSelect = { switchTo(it) },
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    if (settings.isChatGpt) {
-                        when {
-                            signIn != null -> {
-                                Note("Finish signing in in the browser, then come back here. If the browser ends on an address that won't load, copy it and paste it below.")
-                                LineField(
-                                    label = "Address the browser ended on",
-                                    value = pasted,
-                                    onChange = { pasted = it },
-                                    keyboardType = KeyboardType.Uri,
-                                    action = if (pasted.isNotBlank()) "Use" else null,
-                                    onAction = { signIn?.submit(pasted) },
-                                )
-                                OutlineAction(label = "Cancel sign-in", enabled = true, modifier = Modifier.padding(top = 16.dp)) {
-                                    signInJob?.cancel()
-                                }
-                            }
-                            settings.chatgpt != null -> {
-                                ValueRow(value = "Signed in with ChatGPT", action = "Sign out", enabled = true, muted = false) {
-                                    ChatGptTokens.forget()
-                                    update(settings.copy(chatgpt = null, model = "", effort = ""))
-                                    models = emptyList()
-                                    efforts = emptyList()
-                                }
-                                Note("Rewrites use your ChatGPT plan and count against its limits. The sign-in is sealed with the Android Keystore and renews itself.")
-                            }
-                            else -> {
-                                OutlineAction(label = "Sign in with ChatGPT", enabled = true, modifier = Modifier.padding(top = 10.dp)) {
-                                    startSignIn()
-                                }
-                                Note("Opens the ChatGPT sign-in in your browser. Rewrites then use your ChatGPT plan instead of an API key.")
-                            }
-                        }
-                    } else {
                     LineField(
                         label = "Base URL",
                         value = settings.baseUrl,
@@ -408,7 +315,6 @@ fun RewriteSettingsScreen(
                         modifier = Modifier.padding(top = 16.dp),
                     ) { loadModels() }
                     Note("The key is sealed with the Android Keystore and only ever sent to this address.")
-                    }
                 }
                 Spacer(Modifier.height(40.dp))
             }
@@ -430,7 +336,6 @@ private fun StatusCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val (headline, ready) = when {
-        !settings.signedIn && settings.isChatGpt -> "Sign in with ChatGPT to start" to false
         !settings.signedIn -> "Add an API key to start" to false
         connectionFailed -> (connection ?: "Couldn't connect") to false
         settings.model.isBlank() -> "Choose a model" to false
@@ -450,7 +355,7 @@ private fun StatusCard(
             Micro(text = headline, accent = ready, color = if (ready) scheme.primary else scheme.error)
         }
         Spacer(Modifier.height(10.dp))
-        StatusLine("Service", if (settings.isChatGpt) "ChatGPT" else "Ollama Cloud")
+        StatusLine("Service", "Ollama Cloud")
         StatusLine("Model", settings.model.ifBlank { "—" })
         if (settings.effort.isNotBlank()) StatusLine("Effort", settings.effort.replaceFirstChar(Char::uppercase))
         StatusLine(

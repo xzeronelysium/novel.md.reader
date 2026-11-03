@@ -68,34 +68,6 @@ class LabActivity : ComponentActivity() {
         val chapters = (intent.getStringExtra("chapters") ?: DEFAULT_CHAPTERS).split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val parallel = intent.getIntExtra("parallel", 2).coerceIn(1, 6)
 
-        // `--ez chatgptmodels true` logs what each ChatGPT model source answers, with the saved sign-in.
-        if (intent.getBooleanExtra("chatgptmodels", false)) {
-            setContent {
-                MDReaderTheme {
-                    LaunchedEffect(Unit) {
-                        val grant = RewriteStore.of(this@LabActivity).settings().chatgpt
-                        if (grant == null) say("No ChatGPT sign-in saved.")
-                        else {
-                            runCatching { RewriteClient.chatGptModelReport(grant) }
-                                .fold({ lines -> lines.forEach(::say) }, { say("Failed: ${it.message}") })
-                            // One tiny request through the rewrite's own transport, to prove a model answers.
-                            intent.getStringExtra("ping")?.let { model ->
-                                val settings = RewriteStore.of(this@LabActivity).settings()
-                                    .copy(provider = com.mdreader.data.RewriteSettings.CHATGPT, model = model, effort = "low")
-                                runCatching { RewriteClient.stream(settings, "Reply with one short sentence.", "Say hello to a reader.", {}, 0.7) }
-                                    .fold({ say("Ping $model → $it") }, { say("Ping $model failed: ${it.message}") })
-                            }
-                        }
-                        say("Done.")
-                    }
-                    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(16.dp)) {
-                        items(log) { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface) }
-                    }
-                }
-            }
-            return
-        }
-
         // `--ez settings true` shows the rewrite settings with the saved values; changes go nowhere.
         if (intent.getBooleanExtra("settings", false)) {
             val saved = RewriteStore.of(this).settings()
@@ -163,8 +135,7 @@ class LabActivity : ComponentActivity() {
         val store = LibraryStore(this)
         val vault = Vault.of(this)
         val rewrites = RewriteStore.of(this)
-        // This lab targets Ollama models even when the reader currently uses a ChatGPT sign-in.
-        val base = rewrites.settings().copy(provider = com.mdreader.data.RewriteSettings.OLLAMA)
+        val base = rewrites.settings()
         if (base.apiKey.isBlank()) {
             say("No API key saved. Set it in the reader's rewrite settings first.")
             return
