@@ -13,6 +13,8 @@ object RewritePrompts {
         "a mix of", "orbs", "a sense of", "it was as if", "eyes glinted", "intricate", "myriad", "unwavering",
         "a wave of", "sent shivers", "the weight of", "visceral", "ethereal", "resolute", "serene",
         "effortless grace", "in that moment", "a flicker of", "steely", "ministrations", "a beat of silence",
+        "breath hitched", "breath hitching", "jaw tightened", "heart hammered", "heart hammering", "for a heartbeat",
+        "didn't just", "wasn't just", "it wasn't a", "the silence was deafening", "hung in the air", "something shifted",
     )
 
     // ---- Step 1: analyse -------------------------------------------------------------------
@@ -107,7 +109,7 @@ object RewritePrompts {
           > Feed them once. Do not talk to the boy.
         - Thoughts, sounds and the rare stressed word: *italics*. Never bold in the prose itself.
         - A line with only --- where the source breaks the scene, or where the story jumps in time or place. Never between two moments that run on.
-        - Spoken dialogue in the story is ordinary prose: each speaker's line starts its own paragraph, with curly quotes and em dashes.
+        - Spoken dialogue in the story is ordinary prose: each speaker's line starts its own paragraph, with curly quotes. An em dash only for a cut-off line or interruption.
         - No headings, lists, tables, code blocks or HTML.
         - Never use these words or phrases: ${BANNED.joinToString(", ")}.
         - Drop translator notes, author notes, footnote markers, promo lines and site watermarks.
@@ -122,7 +124,7 @@ object RewritePrompts {
         Flat: "The cellar was dark and damp."
         Alive: "The cellar smelled of wet stone and old iron. Water ticked somewhere behind the wall."
         Flat: "The blade fell and he died."
-        Alive: "The blade came down with a sound like a cleaver through a melon. The head hit the boards, rolled once, and stopped facing the door. For a moment the body stayed kneeling, as if no one had told it."
+        Alive: "The blade came down with a wet crack. The head hit the boards, rolled once, and stopped facing the door. The body stayed kneeling for a moment, then tipped over."
         Flat: "He thought about how formations were ranked."
         Alive: "He traced the second line again. One pattern made an apprentice. Six made a Formation Master. Nine, and the Taoist Court would put your name on a list. His finger stopped at two."
         Stiff dialogue from a blunt speaker: "It is not possible for me to agree to your request. Do not ask me another time. My decision has already been made."
@@ -137,6 +139,18 @@ object RewritePrompts {
         Joke kept, wording cleaned: "If you call out Bell in this village, half of the people will turn their heads. If you call Reed, the other half will be responding." becomes "Shout 'Bell' in this village and half of it turns around. Shout 'Reed' and you get the other half." The setup, both halves and the timing survive.
         Clumsy system notice: "[Host has successfully completed the killing of the target. Reward has been given to the host: 50 points.]"
         Clean, same content: "[Target slain. Reward: 50 points.]"
+
+        AVOID MACHINE-WRITTEN TELLS. These mark text as AI-written; a human novelist rarely uses them:
+        - "Not X, but Y" and its cousins: "It wasn't a thud. It was an explosion", "He didn't just walk; he marched", "not anger, but something colder". Write the true thing directly: "The blast shook the windows."
+        - Similes and "as if" / "like a" comparisons in every paragraph. Use at most one striking comparison per scene, only where nothing literal works. Prefer the concrete, literal detail.
+        - Lists of three ("cold, ruthless, inhuman"; "the dice, the talk, the laughter") as a reflex. Use one or two specific items.
+        - Stock body reactions: breath hitching, jaw tightening, heart hammering, a shiver down the spine, eyes widening, a muscle twitching. Pick a reaction that belongs to this person and this moment, or none.
+        - Personified atmosphere: silence that "stretches", "presses" or is "deafening", air that "grows heavy", words that "hang in the air", "something shifted".
+        - One-line dramatic paragraphs and sentence fragments used for punch over and over. Save them for the real turning points.
+        - Ending a paragraph or scene on a summarising takeaway or moral ("It was the beginning of something", "Nothing would ever be the same"). End on an action, image or line.
+        - Over-explaining what a moment means after showing it. Trust the reader.
+        - Em dashes as all-purpose punctuation. Use commas, full stops and colons.
+        - Repeating the same sentence shape: vary length and structure the way human prose does.
 
         LENGTH IS A MINIMUM. The message gives the minimum and maximum words for this scene. Reach the minimum with real texture on the beats that matter, never with filler, repetition or summary.
     """.trimIndent()
