@@ -41,7 +41,7 @@ import com.mdreader.md.chatMessages
 import com.mdreader.md.isSystemDisplay
 
 @Composable
-fun List<InlineSpan>.toAnnotatedString(): AnnotatedString {
+fun List<InlineSpan>.toAnnotatedString(italicColor: Color = Color.Unspecified): AnnotatedString {
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
     return buildAnnotatedString {
         this@toAnnotatedString.forEach { span ->
@@ -52,6 +52,7 @@ fun List<InlineSpan>.toAnnotatedString(): AnnotatedString {
                     fontFamily = if (span.code) FontFamily.Monospace else null,
                     textDecoration = if (span.strike) TextDecoration.LineThrough else null,
                     background = if (span.code) codeBackground else Color.Unspecified,
+                    color = if (span.italic) italicColor else Color.Unspecified,
                 )
             ) {
                 append(span.text)
@@ -117,8 +118,9 @@ fun BlockView(block: Block) {
             )
         }
 
+        // Thoughts (italic in the prose) take a softer ink, so they read apart from speech.
         is Block.Paragraph -> Text(
-            text = block.spans.toAnnotatedString(),
+            text = block.spans.toAnnotatedString(italicColor = colors.onSurfaceVariant),
             style = bodyStyle,
             modifier = Modifier
                 .fillMaxWidth()
@@ -239,6 +241,12 @@ private fun SystemPanel(all: List<InlineSpan>) {
                 .width(2.dp)
                 .background(colors.primary),
         )
+        Column(Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "SYSTEM",
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.5.sp),
+            color = colors.primary,
+        )
         Text(
             // An all-bold screen is the panel's normal weight; a mix keeps its bold labels.
             text = (if (spans.filter { it.text.isNotBlank() }.all { it.bold }) spans.map { it.copy(bold = false) } else spans)
@@ -251,10 +259,8 @@ private fun SystemPanel(all: List<InlineSpan>) {
                 letterSpacing = 0.15.sp,
                 color = colors.onSurface,
             ),
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 16.dp, vertical = 13.dp),
         )
+        }
     }
 }
 

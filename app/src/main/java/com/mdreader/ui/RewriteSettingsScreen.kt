@@ -315,13 +315,12 @@ fun RewriteSettingsScreen(
                     onToggle = { toggle("strength") },
                 ) {
                     Segmented(
-                        options = listOf("light" to "Light", "full" to "Full", "max" to "Max"),
+                        options = listOf("full" to "Full", "max" to "Max"),
                         selected = settings.strength,
                         onSelect = { update(settings.copy(strength = it)) },
                     )
                     Note(
                         when (settings.strength) {
-                            "light" -> "Clean-up. 1.0 to 1.2 times the source length, at least."
                             "max" -> "Deepest rewrite. 1.3 to 1.6 times the source length, at least."
                             else -> "Full rewrite. 1.15 to 1.45 times the source length, at least."
                         },

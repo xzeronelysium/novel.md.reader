@@ -121,7 +121,7 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
                 ?: json.optString("apiKey"),
             model = json.optString("model"),
             effort = json.optString("effort"),
-            strength = json.optString("strength", "full"),
+            strength = json.optString("strength", "full").takeIf { it == "max" } ?: "full",
             memoryDepth = json.optInt("memoryDepth", 20).coerceAtLeast(0),
             chatgpt = json.optString("chatgptEnc").takeIf { it.isNotEmpty() }?.let(box::open)?.let(ChatGptCredential::fromJson),
             deviceId = json.optString("deviceId"),
@@ -226,11 +226,10 @@ object RewriteClient {
     // The default Android agent is refused (403) by the host's firewall.
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     /** Bumped whenever a prompt changes, and stamped into every note, so outputs can be compared. */
-    const val PROMPT_VERSION = "2026-11-03.7"
+    const val PROMPT_VERSION = "2026-11-03.23"
     /** Minimum and maximum words for a chapter of [sourceWords], by strength. */
     internal fun lengthTarget(strength: String, sourceWords: Int): Pair<Int, Int> {
         val (low, high) = when (strength) {
-            "light" -> 1.0 to 1.2
             "max" -> 1.3 to 1.6
             else -> 1.15 to 1.45
         }
@@ -239,7 +238,6 @@ object RewriteClient {
 
     /** How far this run may go; the rest of the prompt is the same for every chapter. */
     internal fun strengthRule(strength: String): String = when (strength) {
-        "light" -> "STRENGTH: light. Mostly a clean-up. Keep the source's own sentences wherever they work; add only small texture and fix unclear staging, wording and flat dialogue."
         "max" -> "STRENGTH: max. Rewrite scenes as deeply as the laws allow. Give crowds, places and violence full, vivid detail, and sharpen every exchange, while keeping every canon rule above."
         else -> "STRENGTH: full. Rewrite each scene so it reads as its best version, keeping every canon rule above."
     }
@@ -628,7 +626,7 @@ object Fidelity {
             val keys = beatStems(beat)
             keys.size >= 3 && keys.count { it in have }.toDouble() / keys.size < 0.45
         }
-        if (missing.isNotEmpty()) out += "These beats are missing or changed; put them back exactly as the source has them: " + missing.joinToString("; ") { it.take(140) }
+        if (missing.isNotEmpty()) out += "These beats are missing or changed; restore the same event and meaning (the wording may stay improved): " + missing.joinToString("; ") { it.take(140) }
 
         val draftNumbers = numbers(draft)
         val lostNumbers = numbers(storyText(source)).filter { it !in draftNumbers }

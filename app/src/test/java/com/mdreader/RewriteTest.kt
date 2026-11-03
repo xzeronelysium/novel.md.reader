@@ -41,7 +41,6 @@ class RewriteTest {
     }
 
     @Test fun lengthTargetsFollowStrength() {
-        assertEquals(1000 to 1200, RewriteClient.lengthTarget("light", 1000))
         assertEquals(1150 to 1450, RewriteClient.lengthTarget("full", 1000))
         assertEquals(1300 to 1600, RewriteClient.lengthTarget("max", 1000))
     }

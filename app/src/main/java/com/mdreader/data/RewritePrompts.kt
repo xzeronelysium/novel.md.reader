@@ -38,7 +38,7 @@ object RewritePrompts {
 
         3. FLAGS. Lines that do not fit the speaker's recorded voice (with a hypothesis: lying, disguised, under stress, or someone else), and contradictions between the source and the memory. Write "- none" if there are none.
 
-        4. KEEP. Select only spoken phrases whose exact wording matters: a recurring catchphrase, a wordplay-dependent punchline, or words another character explicitly quotes or answers word for word. Do not freeze every joke, insult, oath or emotional line: awkward wording can improve while its meaning and effect stay intact. Copy each selected phrase exactly as the source prints it, without quote marks, as one uninterrupted quoted span. Usually 0 to 6 per chapter. Check the surrounding narration: quote marks alone do not make a phrase spoken dialogue. Exclude thoughts, quoted nicknames or labels, narration and reported speech. Write "- none" if there are none.
+        4. KEEP. Usually write "- none". Reserve exact wording ONLY when changing the words would break a specific wordplay or a later verbatim quotation/response in this chapter. Copy only the indispensable phrase, not the surrounding dialogue, without quote marks, as one uninterrupted quoted span. Being funny, emotional, formal, memorable or characteristic of a speaker is NOT a reason to freeze a line. Preserve those effects through better wording instead. Never protect awkward translation merely because it sounds distinctive. Exclude thoughts, labels, narration and reported speech.
 
         Reply in exactly this form, nothing before or after:
         $BEATS
@@ -48,7 +48,7 @@ object RewritePrompts {
         $FLAGS
         - <flag>
         $KEEP
-        - <line copied exactly from the source>
+        - none
     """.trimIndent()
 
     // ---- Step 2: write, one scene at a time --------------------------------------------------
@@ -67,12 +67,13 @@ object RewritePrompts {
         THE LAWS
         - Causality: show why things happen, using the causes you are given. If a cause is unknown, do not make one up.
         - Continuity: people know only what they have learned; places, wounds and objects stay as the memory left them.
-        - Voice: preserve each speaker's vocabulary, rhythm, manners and status from the source and memory. The current scene governs deliberate changes under stress, deception or disguise; do not flatten everyone into the same polished voice.
+        - Voice means the speaker's personality, social position, relationship and manner of speaking, not the source's exact vocabulary, syntax or translated phrasing. Use the source and memory to distinguish a blunt speaker from a cautious one, a formal speaker from a casual one, and sincerity from a bluff. Express that identity in fluent dialogue. The current scene governs changes under stress, deception or disguise; do not flatten everyone into the same voice.
         - Proportion: effort, pain and cost show up in the body and in later lines.
 
-        DIALOGUE: improve how it is said, never what is said
-        - Rewrite lines that are stiff, over-explained, clumsily translated or flat so they sound like this person talking in this moment. Improve idiom, rhythm and emphasis without making a formal speaker casual, a hesitant speaker confident, or a blunt speaker eloquent. Leave already-effective lines alone. Preserve interruptions, hesitation and evasions where the source supports them; do not invent a different answer or motive.
-        - What stays fixed: what each line says (every piece of information, claim, request, refusal, lie and promise), who says it, to whom, its place in the exchange, and its effect on the listener.
+        DIALOGUE: preserve the meaning, REWRITE poor wording
+        - Recompose stiff, flat, over-explained or badly translated dialogue from the speaker's intent. First understand what they convey, what they want from the listener and the pressure of the moment; then write how THIS person would naturally say it. Change the actual sentences: word choice, sentence construction, rhythm, emphasis and unnecessary repetition. Copying a bad line with minor punctuation changes, a new tag or extra gestures is not an enhancement. A formal character should sound naturally formal, not clumsily translated; a blunt character should sound blunt, not suddenly eloquent. Keep already-effective lines and ordinary brief replies when they work; do not force synonyms just to make the text different.
+        - What stays fixed: what each line says (every piece of information, claim, request, refusal, lie and promise), who says it, to whom, its place in the exchange, and its effect on the listener. Read clumsy grammar in context so a clearer sentence does not reverse a negation, uncertainty or attitude. If the source leaves a speaker genuinely unclear, do not invent a definite attribution.
+        - Preserve jokes, their setups and punchlines, sarcasm, and deliberate verbal slips or self-corrections. Those are part of meaning and voice, not awkwardness to polish away. Preserve source-supported hesitation and evasions; do not invent a different answer or motive.
         - Preserve every conversational beat, not every sentence boundary: lines may be split or combined within the same speaker's turn if nothing is lost. Do not reduce an exchange to a summary. Spoken stays spoken; thoughts stay thoughts. Read the surrounding narration to tell them apart: muttered or whispered words are still spoken, while a phrase marked "thought to herself" stays internal even if quoted.
         - The phrases you are told to keep word for word retain their exact wording and their role in the source. If the plan mistakenly selected a thought or label, keep it internal or as a label; never make it spoken. Surrounding dialogue may still improve.
         - New dialogue goes only to unnamed bystanders as inconsequential texture. Named characters may be reworded, but gain no new claims, knowledge, commitments or exchanges. Reported speech stays reported.
@@ -80,7 +81,7 @@ object RewritePrompts {
         CRAFT
         - Amplify the register you are given. Comic scenes get funnier, grim scenes heavier, tense scenes tighter.
         - Emotion is shown through the body and through choices, never named ("he was furious" is banned).
-        - Every line of dialogue pushes, dodges, tests or hides something.
+        - Let each line carry its intent clearly; tension, evasion or subtext only where the source has it.
         - Crowds and minor characters each get a small, specific moment. Never two identical reactions in a row.
         - Violence and gore at full weight, in plain exact words. Never softened, skipped or summarised.
         - Use the texture, sharpen and anchor notes you are given.
@@ -91,8 +92,9 @@ object RewritePrompts {
         - Dialogue tags: mostly "said"; often no tag at all, with an action beat instead.
         - Numbers as digits (5 swords, 3,000 gold, a 10-year-old boy), keeping the source's values.
         - Never call a person by the same description twice ("the older soldier", "the chubby boy"). Use the name, then a pronoun, then something they are doing.
+        - The same rewriting applies to system notices, status screens, quest and skill text, chat messages, texts, transmissions, letters, notes and signs: recompose clumsy, redundant or badly translated wording so it reads cleanly in its own register (a system sounds crisp and clinical, a chat message sounds like that sender typing). Keep exactly the same information, and keep names, skill and item names, ranks, stats, numbers, costs and conditions unchanged. Never add or drop an entry, a reward or a requirement. Leave lines that already read well alone.
         FORMATTING. The reader draws each kind of content its own way, so give every kind its exact form:
-        - System notices, status screens, stats, skills, items, quests and level-ups: every line as a bold blockquote in the source's own words (keep its brackets; a notice the source wraps over several lines gets one pair of brackets per line), one line per entry, with no blank line between the lines of one screen.
+        - System notices, status screens, stats, skills, items, quests and level-ups: every line as a bold blockquote (keep its brackets; a notice the source wraps over several lines gets one pair of brackets per line), one line per entry, with no blank line between the lines of one screen.
           > **[Skill Name: Invisibility]**
           > **[Cost: 8000 skill points]**
           A stats table the source prints as "Key: Value" lines is a status screen too: > **Physique: Heaven Refining Physique**
@@ -100,7 +102,7 @@ object RewritePrompts {
           > **Fang Yun:** “Heh, you figured it out pretty quickly.”
           > **Wang Ping:** “Why do you say that?”
           > Group members: 7/67.
-        - Letters, notes, signs, inscriptions and words read or remembered verbatim: a plain blockquote, never bold.
+        - Letters, notes, signs, inscriptions and words a character reads or remembers: a plain blockquote, never bold.
           > Feed them once. Do not talk to the boy.
         - Thoughts, sounds and the rare stressed word: *italics*. Never bold in the prose itself.
         - A line with only --- where the source breaks the scene, or where the story jumps in time or place. Never between two moments that run on.
@@ -125,6 +127,13 @@ object RewritePrompts {
         Stiff dialogue from a blunt speaker: "It is not possible for me to agree to your request. Do not ask me another time. My decision has already been made."
         Natural, same meaning and firmness: "I can't agree to what you're asking. Don't ask again. I've made up my mind."
         This changes the actual dialogue, not just its tags or surrounding gestures. Preserve all three beats: refusal, instruction not to ask again, and a settled decision. Do not turn this into a threat, an apology, a new reason or a different personality.
+        Clumsy boast from a cocky youth: "My talent is such that in the future everyone will be looking at me from below with admiration, it is certain."
+        Natural, same cockiness: "Give it a few years. Every one of you will be looking up at me."
+        Clumsy line from a formal noble: "I am expressing gratitude to you for your assistance which you have given to me today."
+        Natural, still formal: "You have my thanks for your help today."
+        Joke kept, wording cleaned: "If you call out Bell in this village, half of the people will turn their heads. If you call Reed, the other half will be responding." becomes "Shout 'Bell' in this village and half of it turns around. Shout 'Reed' and you get the other half." The setup, both halves and the timing survive.
+        Clumsy system notice: "[Host has successfully completed the killing of the target. Reward has been given to the host: 50 points.]"
+        Clean, same content: "[Target slain. Reward: 50 points.]"
 
         LENGTH IS A MINIMUM. The message gives the minimum and maximum words for this scene. Reach the minimum with real texture on the beats that matter, never with filler, repetition or summary.
     """.trimIndent()
@@ -135,7 +144,7 @@ object RewritePrompts {
         "dialogue" to "SCENE METHOD (dialogue): give each speaker a goal and a tell. Make every line sound like that speaker under that pressure: rework stiff or translated wording, and let silences, interruptions and action beats carry what the words leave unsaid. Keep every piece of information that passes between them, and every line you are told to keep word for word.",
         "inner" to "SCENE METHOD (inner thought and explanation): do not paraphrase a block of thinking. Put the character in the present moment, doing something with their hands or body, and let each fact arrive as something they notice, remember, test or decide. Keep every fact and every number of the explanation.",
         "comedy" to "SCENE METHOD (comedy): set up, then a specific absurd detail, then an undercut, then a beat for the reaction. Timing matters more than adjectives. Let the straight man stay straight.",
-        "system" to "SCENE METHOD (system and status screens): keep each screen verbatim as a blockquote. The feeling lives in the character's reaction before and after: what they expected, what they see, what they do next.",
+        "system" to "SCENE METHOD (system and status screens): keep every screen as a blockquote with the same entries, names and numbers, its wording cleaned up where the source is clumsy. The feeling lives in the character's reaction before and after: what they expected, what they see, what they do next.",
         "crowd" to "SCENE METHOD (crowds and groups): pick 2 or 3 individuals in the crowd and give each one small, specific action or line. The crowd's mood moves; it does not just gasp.",
         "travel" to "SCENE METHOD (travel and transitions): compress the trip, keep one strong place anchor and one physical sensation of moving through it, and arrive quickly.",
     )
@@ -172,7 +181,7 @@ object RewritePrompts {
         ## people/<Name>
         - also called: <titles, nicknames, other spellings the text uses> (Ch N)
         - now: <realm or level, where they are, their condition, what they carry> (Ch N)
-        - voice: <how they talk: register, how they address others, habits> "<a short line they said>" (Ch N)
+        - voice: <how they talk, described in your own words: register, confidence, how they address others, verbal habits; never quote their lines> (Ch N)
         - <appearance, role, trait, relation or what they know> (Ch N)
         ## places/<Name>
         - <layout, look, materials, light, sound, smell, landmarks, who is there> (Ch N)
