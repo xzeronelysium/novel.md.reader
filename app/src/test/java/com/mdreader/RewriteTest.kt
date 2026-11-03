@@ -60,7 +60,7 @@ class RewriteTest {
     private fun tmpFile(bible: com.mdreader.data.BibleStore): String = bible.context("Young Master Qian")
 
     @Test fun planIsReadFromTheAnalysis() {
-        val paras = List(6) { "word ".repeat(120).trim() }
+        val paras = List(6) { "word ".repeat(300).trim() }
         val raw = "<think>hm</think>=== BEATS ===\n1. [P1-P2] Sunny kills the larva | cause: it attacked him\n2. [P5] He rests | cause: unknown\n" +
             "=== SCENES ===\nS1 | P1-P3 | type: action | register: grim | texture: a; b; c | sharpen: x | anchor: y\n" +
             "S2 | P4-P6 | type: inner | register: tense | texture: d | sharpen: z | anchor: w | wants: Sunny wants out; hides his fear | pace: quiet\n=== FLAGS ===\n- none"
@@ -180,6 +180,38 @@ class RewriteTest {
         val source = "“It is not possible for me to agree.”\n\n“Do not ask again,” she said.\n\n“I have made my decision.”"
         val draft = "“I can't agree. Don't ask again. I've made up my mind,” she said."
         assertEquals(emptyList<String>(), Fidelity.sceneProblems(source, draft, emptyList(), 0, ""))
+    }
+
+    @Test fun aRepairIsAskedForOnlyWhenItCanHelp() {
+        val draft = "word ".repeat(400)
+        val beats1 = "These beats are missing or changed; restore the same event and meaning (the wording may stay improved): a"
+        val beats3 = "$beats1; b; c"
+        assertEquals(false, RewritePipeline.repairWorthwhile(emptyList(), draft, 300))
+        assertEquals(false, RewritePipeline.repairWorthwhile(listOf(beats1), draft, 300))
+        assertEquals(true, RewritePipeline.repairWorthwhile(listOf(beats3), draft, 300))
+        assertEquals(false, RewritePipeline.repairWorthwhile(listOf("It has 380 words, well under the source's length; something may have been dropped."), draft, 400))
+        assertEquals(true, RewritePipeline.repairWorthwhile(listOf("x"), "word ".repeat(100), 400))
+        assertEquals(true, RewritePipeline.repairWorthwhile(listOf("These banned words or phrases appear; replace them with plain, exact words: a sense of"), draft, 300))
+        assertEquals(true, RewritePipeline.repairWorthwhile(listOf("These names or labels are not in the source or the memory; remove them or use the source's own words: Fairy"), draft, 300))
+        assertEquals(false, RewritePipeline.repairWorthwhile(listOf("These numbers from the source are missing; keep them as digits: 2, 3"), draft, 300))
+        assertEquals(true, RewritePipeline.repairWorthwhile(listOf("These numbers from the source are missing; keep them as digits: 2, 500"), draft, 300))
+        assertEquals(false, RewritePipeline.repairWorthwhile(listOf("Write ages as digits: ten-year-old"), draft, 300))
+    }
+
+    @Test fun spelledAgesBecomeDigitsWithoutARequest() {
+        assertEquals("a 10-year-old boy and a 12-year-old girl", RewritePipeline.digitAges("a ten-year-old boy and a Twelve-year-old girl"))
+        assertEquals("a hundred-year-old tree", RewritePipeline.digitAges("a hundred-year-old tree"))
+    }
+
+    @Test fun shortNeighbouringScenesJoinWithBothBriefs() {
+        val paras = List(10) { "word ".repeat(150).trim() }
+        val raw = "=== SCENES ===\nS1 | P1-P3 | type: dialogue | turn: a | end: x1\nS2 | P4-P6 | type: action | turn: b | end: x2\nS3 | P7-P10 | type: inner | turn: c | end: x3\n"
+        val scenes = RewritePipeline.parsePlan(raw, paras).scenes
+        assertEquals(2, scenes.size)
+        assertEquals(listOf(1 to 6, 7 to 10), scenes.map { it.from to it.to })
+        assertEquals("a, then b", scenes[0].turn)
+        assertEquals("x2", scenes[0].end)
+        assertEquals("dialogue", scenes[0].type)
     }
 
     @Test fun tinyScenesAreFoldedAndHugeOnesSplit() {

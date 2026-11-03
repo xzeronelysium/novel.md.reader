@@ -7,7 +7,7 @@ package com.mdreader.data
  */
 object RewritePrompts {
 
-    /** Words that make prose ornate or tired. Only the code checks for them; the prompt does not list them, because naming a phrase primes it. */
+    /** Words that make prose ornate or tired. The prompt lists them and the code checks for them: a draft that has one costs a second request, and naming them prevents that. */
     val BANNED = listOf(
         "ephemeral", "enigmatic", "palpable", "tapestry", "testament to", "symphony of", "couldn't help but",
         "a mix of", "orbs", "a sense of", "it was as if", "eyes glinted", "intricate", "myriad", "unwavering",
@@ -32,7 +32,7 @@ object RewritePrompts {
 
         1. BEATS. List every beat of the source in order: each thing that happens, is said, is decided, is felt or is learned, including physical and bodily details and small emotional turns ("he is so pleased he forgets to be disappointed"). A fact a character states or remembers about the past is its own beat (a death, a betrayal, a debt, who did what to whom), even inside a long speech or a thought, so the writer cannot drop it. One line each, with the paragraph range and the cause. The cause comes from the source, from the memory, or is "unknown". Never invent a cause.
 
-        2. SCENES. Split the chapter into scenes of roughly 300 to 900 source words, at natural turns (place, time, focus or mood changes). Scenes cover every paragraph exactly once, in order. For each scene give:
+        2. SCENES. Split the chapter into scenes of roughly 500 to 1,200 source words, at natural turns (place, time, focus or mood changes). Scenes cover every paragraph exactly once, in order. For each scene give:
            - type: one of action, dialogue, inner, comedy, system, crowd, travel
            - register: the feeling to amplify (for example comic, grim, tense, tender, awe, eerie)
            - texture: 1 or 2 details only THIS scene could have (not generic weather, smell or light), consistent with the memory and the source
@@ -118,7 +118,7 @@ object RewritePrompts {
         - Restraint: a quiet scene stays understated. Save one-line paragraphs and fragments for real turning points. Use commas, full stops and colons; em dashes only for a cut-off line.
         - Everyone present wants something and the wants rub against each other; show it through what they do and avoid, not by naming subtext. Give a crowd or minor character one specific action only when they matter to the moment.
         - Violence and gore at full weight, in plain exact words. Never softened, skipped or summarised.
-        - Plain wording: no stock fiction phrases or purple vocabulary. A checker rejects them and the scene will have to be redone.
+        - Plain wording: no stock fiction phrases or purple vocabulary. Never use these words or phrases (a checker rejects them and the whole scene is written again): ${BANNED.joinToString(", ")}.
         - Never call a person by the same description twice ("the older soldier"). Use the name, then a pronoun, then something they are doing.
         - Numbers as digits (5 swords, 3,000 gold, a 10-year-old boy), keeping the source's values.
 

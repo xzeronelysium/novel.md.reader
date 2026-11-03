@@ -87,9 +87,11 @@ object RewritePipeline {
             if (it is kotlinx.coroutines.CancellationException) throw it
             fallbackPlan(paras)
         }
+        var analyses = 1
         val planProblem = plan.problem
         if (planProblem != null) {
             onStage("ANALYSING AGAIN")
+            analyses++
             warnings += "plan: the scenes of the analysis were unusable ($planProblem)"
             val retry = runCatching {
                 parsePlan(
@@ -114,6 +116,7 @@ object RewritePipeline {
         val known = sheets + "\n" + previousNote.orEmpty() + "\n" + previousTail.orEmpty() + "\n" + title
         val written = mutableListOf<String>()
         var repairs = 0
+        val repairLog = mutableListOf<String>()
         for ((i, scene) in plan.scenes.withIndex()) {
             val label = "SCENE ${i + 1}/${plan.scenes.size}"
             onStage("WRITING $label")
@@ -141,7 +144,7 @@ object RewritePipeline {
                 if (i == plan.scenes.lastIndex) {
                     append("THIS IS THE LAST SCENE OF THE CHAPTER. End on the same moment, line and feeling as the source's last paragraph; add nothing after it.\n\n")
                 }
-                append("LENGTH: the source scene has ${Fidelity.wordCount(source)} words. Use what the scene needs, at most about $maxWords; a quiet scene may stay close to the source's length.\n\n")
+                append("LENGTH: the source scene has ${Fidelity.wordCount(source)} words. Aim for about $minWords to $maxWords words. A scene far under $minWords has lost beats or exchanges; cut only the repetition the brief marks, never an event, a fact or a line of dialogue that matters. A quiet scene may stay close to the source's length.\n\n")
                 append("SOURCE SCENE (Ch $number, $title):\n\n").append(source)
             }
             val system = RewritePrompts.WRITE + "\n\n" + (RewritePrompts.METHODS[scene.type] ?: "")
@@ -150,9 +153,11 @@ object RewritePipeline {
             val previousScene = written.lastOrNull().orEmpty()
             val soFar = written.joinToString("\n\n")
             var problems = Fidelity.sceneProblems(source, draft, beats.map { it.text }, minWords, known, previousScene, soFar, keep)
-            if (problems.isNotEmpty()) {
+            if (repairWorthwhile(problems, draft, minWords)) {
                 onStage("REPAIRING $label")
                 repairs++
+                val firstKinds = problems.map(::problemKind)
+                var outcome = "second draft failed"
                 val retry = user + "\n\n---\n\nYOUR DRAFT OF THIS SCENE WAS REJECTED FOR THESE REASONS:\n" +
                     problems.joinToString("\n") { "- $it" } + "\n\nYOUR DRAFT:\n" + draft +
                     "\n\nWrite the whole scene again, fixing exactly these problems and keeping what was good."
@@ -160,13 +165,18 @@ object RewritePipeline {
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
                 if (second != null && second.isNotBlank()) {
                     val secondProblems = Fidelity.sceneProblems(source, second, beats.map { it.text }, minWords, known, previousScene, soFar, keep)
+                    outcome = "${problems.size} -> ${secondProblems.size} problems, "
                     if (secondProblems.size < problems.size ||
                         (secondProblems.size == problems.size && Fidelity.wordCount(second) > Fidelity.wordCount(draft))
                     ) {
                         draft = second
                         problems = secondProblems
+                        outcome += "kept the repair"
+                    } else {
+                        outcome += "kept the first draft"
                     }
                 }
+                repairLog += "scene ${i + 1}: ${firstKinds.joinToString("+")}: $outcome"
             }
             if (draft.isBlank()) throw java.io.IOException("The service returned an empty scene.")
             written += draft
@@ -200,6 +210,8 @@ object RewritePipeline {
             append("\n\n## Run\n- prompt ${RewriteClient.PROMPT_VERSION}\n- model ${settings.model}")
             if (settings.effort.isNotBlank()) append(" (effort ${settings.effort})")
             append("\n- scenes ${plan.scenes.size}, repairs $repairs")
+            append("\n- requests ${analyses + plan.scenes.size + repairs + 1} (analysis $analyses, scenes ${plan.scenes.size}, repairs $repairs, record 1)")
+            if (repairLog.isNotEmpty()) append("\n\n## Repairs\n").append(repairLog.joinToString("\n") { "- $it" })
         }
         return Rewrite(chapter, note, sheetUpdates)
     }
@@ -285,6 +297,46 @@ object RewritePipeline {
 
     private const val SLIP = 3
 
+    /**
+     * Whether a second request can fix what the checks found. Measured on real runs: a repair for
+     * a missing beat, a short scene or a small number never fixed it (the beat check also has false
+     * alarms), while banned phrases, invented names and lost protected lines are fixed nearly
+     * every time. The rest stays in the note as a warning.
+     */
+    internal fun repairWorthwhile(problems: List<String>, draft: String, minWords: Int): Boolean {
+        if (problems.isEmpty()) return false
+        if (minWords > 0 && Fidelity.wordCount(draft) < minWords * 0.75) return true
+        return problems.any { message ->
+            when (problemKind(message)) {
+                "banned", "names", "protected" -> true
+                "beats" -> message.substringAfter(": ").split("; ").size >= 3
+                "numbers" -> Regex("\\d+").findAll(message.substringAfter(": ")).any { (it.value.toLongOrNull() ?: 0L) > 10L }
+                else -> false
+            }
+        }
+    }
+
+    private val ageWords = listOf("two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+        "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty").withIndex().associate { (i, w) -> w to i + 2 }
+
+    /** "ten-year-old" is written as "10-year-old", so the age rule never costs a request. */
+    internal fun digitAges(text: String): String =
+        Regex("\\b(" + ageWords.keys.joinToString("|") + ")-year-old", RegexOption.IGNORE_CASE)
+            .replace(text) { ageWords[it.groupValues[1].lowercase()].toString() + "-year-old" }
+
+    /** A short name for what a scene problem is about, for the repair log. */
+    internal fun problemKind(message: String): String = when {
+        message.startsWith("It has") -> "length"
+        message.startsWith("These beats") -> "beats"
+        message.startsWith("These numbers") -> "numbers"
+        message.startsWith("These banned") -> "banned"
+        message.startsWith("These descriptions") -> "repeats"
+        message.startsWith("These names") -> "names"
+        message.startsWith("Restore these protected") -> "protected"
+        message.startsWith("Write ages") -> "ages"
+        else -> "other"
+    }
+
     /** One line on what is wrong with the scenes of an analysis, for the note and for the retry. */
     internal fun sceneProblem(scenes: List<Scene>, n: Int, text: String, noVoices: Boolean): String = when {
         scenes.isEmpty() -> "no scene lines were found (lines must start with S1, S2, ...)" +
@@ -297,14 +349,14 @@ object RewritePipeline {
             ?: "the scene ranges are unusable"
     } + if (noVoices) "; no VOICES section was found" else ""
 
-    /** Scenes in ~600-word chunks at paragraph boundaries, when the analysis is unusable. */
+    /** Scenes in ~800-word chunks at paragraph boundaries, when the analysis is unusable. */
     internal fun fallbackPlan(paras: List<String>): Plan {
         val scenes = mutableListOf<Scene>()
         var start = 1
         var words = 0
         paras.forEachIndexed { i, p ->
             words += Fidelity.wordCount(p)
-            if (words >= 600 || i == paras.lastIndex) {
+            if (words >= 800 || i == paras.lastIndex) {
                 scenes += Scene(start, i + 1)
                 start = i + 2
                 words = 0
@@ -313,20 +365,39 @@ object RewritePipeline {
         return Plan(emptyList(), scenes, emptyList())
     }
 
-    /** Splits scenes over 900 source words and folds scenes under 150 words into the one before. */
+    private const val SCENE_MIN = 500
+    private const val SCENE_JOIN_MAX = 1100
+
+    /** Two neighbouring scenes as one, keeping both briefs: what each wants, turns on and ends on. */
+    internal fun join(a: Scene, b: Scene): Scene {
+        fun both(x: String, y: String, sep: String = "; ") = listOf(x, y).filter { it.isNotBlank() && !it.equals("none", true) }.distinct().joinToString(sep)
+        return a.copy(
+            to = b.to,
+            texture = both(a.texture, b.texture), sharpen = both(a.sharpen, b.sharpen),
+            wants = both(a.wants, b.wants), turn = both(a.turn, b.turn, ", then "),
+            dialogue = both(a.dialogue, b.dialogue), cut = both(a.cut, b.cut),
+            end = b.end.ifBlank { a.end },
+            pace = if (a.pace == "loud" || b.pace == "loud") "loud" else a.pace,
+        )
+    }
+
+    /** Splits scenes over 1,300 source words and joins short neighbours into one scene with both briefs. */
     private fun balance(scenes: List<Scene>, paras: List<String>): List<Scene> {
         fun words(s: Scene) = paras.subList(s.from - 1, s.to).sumOf { Fidelity.wordCount(it) }
         val split = scenes.flatMap { s ->
-            if (words(s) <= 900) return@flatMap listOf(s)
+            if (words(s) <= 1300) return@flatMap listOf(s)
             fallbackPlan(paras.subList(s.from - 1, s.to)).scenes.map { c -> s.copy(from = s.from + c.from - 1, to = s.from + c.to - 1) }
         }
         val out = mutableListOf<Scene>()
         for (s in split) {
             val last = out.lastOrNull()
-            if (last != null && words(s) < 150) out[out.lastIndex] = last.copy(to = s.to) else out += s
+            // Fewer, fuller scenes mean fewer requests: a short scene joins its neighbour while the pair stays a good size.
+            val joins = last != null && (words(s) < 150 ||
+                ((words(last) < SCENE_MIN || words(s) < SCENE_MIN) && words(last) + words(s) <= SCENE_JOIN_MAX))
+            if (last != null && joins) out[out.lastIndex] = join(last, s) else out += s
         }
         if (out.size > 1 && words(out.first()) < 150) {
-            out[1] = out[1].copy(from = out[0].from)
+            out[1] = join(out[0], out[1])
             out.removeAt(0)
         }
         return out
@@ -341,7 +412,7 @@ object RewritePipeline {
      * and the lines of one screen or one chat log are pulled together into one block.
      */
     internal fun clean(raw: String): String {
-        val text = raw.replace(Regex("(?s)<think>.*?</think>"), "")
+        val text = digitAges(raw).replace(Regex("(?s)<think>.*?</think>"), "")
             .replace(Regex("(?m)^```.*$"), "")
             .replace(Regex("(?m)^=== .* ===$"), "")
             .replace(Regex("""\$\\(?:rightarrow|to)\$"""), "→")
