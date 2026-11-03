@@ -46,6 +46,8 @@ object RewritePipeline {
         val flags: List<String>,
         val keep: List<String> = emptyList(),
         val voices: Map<String, String> = emptyMap(),
+        /** Why the scenes of the analysis could not be used (then they are plain chunks), or null. */
+        val problem: String? = null,
     )
 
     /** The voice notes of the people a scene's source mentions by name. */
@@ -78,14 +80,33 @@ object RewritePipeline {
         onStage("ANALYSING")
         val numbered = paras.mapIndexed { i, p -> "[P${i + 1}] $p" }.joinToString("\n\n")
         val warnings = mutableListOf<String>()
-        val plan = runCatching {
-            parsePlan(
-                RewriteClient.stream(settings, RewritePrompts.ANALYSE, memory + "SOURCE CHAPTER: $title\n\n$numbered", onProgress),
-                paras,
-            )
+        val analysisUser = memory + "SOURCE CHAPTER: $title\n\n$numbered"
+        var plan = runCatching {
+            parsePlan(RewriteClient.stream(settings, RewritePrompts.ANALYSE, analysisUser, onProgress), paras)
         }.getOrElse {
             if (it is kotlinx.coroutines.CancellationException) throw it
             fallbackPlan(paras)
+        }
+        val planProblem = plan.problem
+        if (planProblem != null) {
+            onStage("ANALYSING AGAIN")
+            warnings += "plan: the scenes of the analysis were unusable ($planProblem)"
+            val retry = runCatching {
+                parsePlan(
+                    RewriteClient.stream(
+                        settings, RewritePrompts.ANALYSE,
+                        analysisUser + "\n\n---\n\nYOUR PREVIOUS REPLY COULD NOT BE USED: $planProblem. Reply again in exactly the form given. The scenes must cover P1 to P${paras.size} once each, in order, with no gap and no overlap, and the VOICES section must follow the scenes.",
+                        onProgress,
+                    ),
+                    paras,
+                )
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
+            if (retry != null && retry.problem == null) {
+                plan = retry
+                warnings += "plan: the second analysis was usable"
+            } else {
+                warnings += "plan: the second analysis was no better; scenes were cut by length and carry no brief"
+            }
         }
         if (plan.beats.isEmpty()) warnings += "the planning step gave no beats; scenes were cut by length and beats were not checked"
 
@@ -236,10 +257,45 @@ object RewritePipeline {
             .filter { it.isNotEmpty() && !it.equals("none", true) && Fidelity.containsQuotedWording(sourceText, it) }
             .distinct()
 
-        val valid = scenes.isNotEmpty() && scenes.first().from == 1 && scenes.last().to == n &&
-            scenes.zipWithNext().all { (a, b) -> b.from == a.to + 1 } && scenes.all { it.from <= it.to }
-        return Plan(beats, if (valid) balance(scenes, paras) else fallbackPlan(paras).scenes, flags, keep, voices)
+        val snapped = snapScenes(scenes, n)
+        val problem = if (snapped != null) null else sceneProblem(scenes, n, text, voices.isEmpty())
+        return Plan(beats, if (snapped != null) balance(snapped, paras) else fallbackPlan(paras).scenes, flags, keep, voices, problem)
     }
+
+    /**
+     * Scenes that cover every paragraph once, in order. Small slips in the model's ranges (a gap or an
+     * overlap of up to [SLIP] paragraphs, an end a few short of the last paragraph) are mended so the
+     * briefs survive; anything bigger returns null and the scenes are replaced.
+     */
+    internal fun snapScenes(scenes: List<Scene>, n: Int): List<Scene>? {
+        if (scenes.isEmpty() || n < 1) return null
+        if (scenes.any { it.from > it.to || it.from < 1 || it.to > n }) return null
+        if (scenes.first().from > SLIP + 1 || n - scenes.last().to > SLIP) return null
+        val out = mutableListOf<Scene>()
+        for (s in scenes) {
+            val from = if (out.isEmpty()) 1 else out.last().to + 1
+            if (s.to < from) continue // swallowed by an overlap
+            if (out.isNotEmpty() && Math.abs(s.from - from) > SLIP) return null
+            out += s.copy(from = from)
+        }
+        if (out.isEmpty()) return null
+        out[out.lastIndex] = out.last().copy(to = n)
+        return out
+    }
+
+    private const val SLIP = 3
+
+    /** One line on what is wrong with the scenes of an analysis, for the note and for the retry. */
+    internal fun sceneProblem(scenes: List<Scene>, n: Int, text: String, noVoices: Boolean): String = when {
+        scenes.isEmpty() -> "no scene lines were found (lines must start with S1, S2, ...)" +
+            if (!text.contains(RewritePrompts.SCENES)) "; the " + RewritePrompts.SCENES + " heading is missing, the reply may have been cut off" else ""
+        scenes.any { it.from > it.to } -> "a scene range runs backwards"
+        scenes.first().from != 1 -> "the first scene starts at P${scenes.first().from}, not P1"
+        scenes.last().to != n -> "the last scene ends at P${scenes.last().to}, but the chapter has $n paragraphs (P$n is the last)"
+        else -> scenes.zipWithNext().firstOrNull { (a, b) -> b.from != a.to + 1 }
+            ?.let { (a, b) -> "scene ending at P${a.to} is followed by one starting at P${b.from}; each scene must start at the paragraph after the previous one ends" }
+            ?: "the scene ranges are unusable"
+    } + if (noVoices) "; no VOICES section was found" else ""
 
     /** Scenes in ~600-word chunks at paragraph boundaries, when the analysis is unusable. */
     internal fun fallbackPlan(paras: List<String>): Plan {

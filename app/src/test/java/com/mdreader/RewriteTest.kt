@@ -91,6 +91,38 @@ class RewriteTest {
         assertEquals(listOf("Ryan: stiff, polite foreigner"), RewritePipeline.voicesFor(plan, "Ryan bowed."))
     }
 
+    @Test fun theNaturalVersionOfAStiffLineTravelsInTheBrief() {
+        val raw = "=== SCENES ===\nS1 | P1-P2 | type: dialogue | dialogue: P1 Wen: refuses, no silver => It's a lot of silver, and I don't have it; P2 boy: asks for half => Half, then? | end: the boy bows\n"
+        val scene = RewritePipeline.parsePlan(raw, listOf("a", "b")).scenes.single()
+        assertEquals("P1 Wen: refuses, no silver => It's a lot of silver, and I don't have it; P2 boy: asks for half => Half, then?", scene.dialogue)
+        assertEquals("the boy bows", scene.end)
+    }
+
+    @Test fun smallSlipsInSceneRangesAreMendedAndBigOnesExplained() {
+        val s = { from: Int, to: Int -> RewritePipeline.Scene(from, to, turn = "t$from") }
+        // An overlap, a gap and a last scene that stops one short: the briefs survive.
+        val mended = RewritePipeline.snapScenes(listOf(s(1, 10), s(9, 20), s(23, 29)), 30)!!
+        assertEquals(listOf(1 to 10, 11 to 20, 21 to 30), mended.map { it.from to it.to })
+        assertEquals(listOf("t1", "t9", "t23"), mended.map { it.turn })
+        // A scene fully inside the one before it is dropped.
+        assertEquals(2, RewritePipeline.snapScenes(listOf(s(1, 10), s(5, 8), s(11, 20)), 20)!!.size)
+        // Half the chapter missing: not mended.
+        assertNull(RewritePipeline.snapScenes(listOf(s(1, 10), s(40, 50)), 50))
+        assertNull(RewritePipeline.snapScenes(listOf(s(1, 10)), 50))
+        assertNull(RewritePipeline.snapScenes(emptyList(), 5))
+        val why = RewritePipeline.sceneProblem(listOf(s(1, 10), s(40, 50)), 50, "=== SCENES ===", true)
+        assert(why.contains("P10") && why.contains("P40") && why.contains("VOICES")) { why }
+        assert(RewritePipeline.sceneProblem(emptyList(), 5, "no headings", false).contains("cut off"))
+    }
+
+    @Test fun aNearlyRightPlanKeepsItsBriefs() {
+        val raw = "=== SCENES ===\nS1 | P1-P3 | type: dialogue | turn: a | end: x\nS2 | P5-P5 | type: action | turn: b | end: y\n=== VOICES ===\n- Wen: blunt\n"
+        val plan = RewritePipeline.parsePlan(raw, List(6) { "word ".repeat(200).trim() })
+        assertNull(plan.problem)
+        assertEquals(listOf("a", "b"), plan.scenes.map { it.turn })
+        assertEquals(6, plan.scenes.last().to)
+    }
+
     @Test fun brokenScenesFallBackToChunks() {
         val paras = List(10) { "word ".repeat(200).trim() }
         val raw = "=== SCENES ===\nS1 | P1-P4 | type: action\nS2 | P7-P10 | type: inner"

@@ -189,7 +189,7 @@ object RewriteClient {
     // The default Android agent is refused (403) by the host's firewall.
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     /** Bumped whenever a prompt changes, and stamped into every note, so outputs can be compared. */
-    const val PROMPT_VERSION = "2026-11-03.27"
+    const val PROMPT_VERSION = "2026-11-04.34"
     /**
      * Floor and ceiling words for [sourceWords]. The ceiling is the real limit; the floor only
      * catches a scene that dropped content, so a quiet scene may stay short.
