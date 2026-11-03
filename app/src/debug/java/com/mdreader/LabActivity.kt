@@ -68,6 +68,34 @@ class LabActivity : ComponentActivity() {
         val chapters = (intent.getStringExtra("chapters") ?: DEFAULT_CHAPTERS).split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val parallel = intent.getIntExtra("parallel", 2).coerceIn(1, 6)
 
+        // `--ez grokmodels true` logs what the Grok model list answers, with the saved sign-in.
+        if (intent.getBooleanExtra("grokmodels", false)) {
+            setContent {
+                MDReaderTheme {
+                    LaunchedEffect(Unit) {
+                        val grant = RewriteStore.of(this@LabActivity).settings().xai
+                        if (grant == null) say("No Grok sign-in saved.")
+                        else {
+                            runCatching { RewriteClient.grokModelReport(grant) }
+                                .fold({ lines -> lines.forEach(::say) }, { say("Failed: ${it.message}") })
+                            // One tiny request through the rewrite's own transport, to prove a model answers.
+                            intent.getStringExtra("ping")?.let { model ->
+                                val settings = RewriteStore.of(this@LabActivity).settings()
+                                    .copy(provider = com.mdreader.data.RewriteSettings.GROK, model = model, effort = "")
+                                runCatching { RewriteClient.stream(settings, "Reply with one short sentence.", "Say hello to a reader.", {}, 0.7) }
+                                    .fold({ say("Ping $model → $it") }, { say("Ping $model failed: ${it.message}") })
+                            }
+                        }
+                        say("Done.")
+                    }
+                    LazyColumn(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(16.dp)) {
+                        items(log) { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface) }
+                    }
+                }
+            }
+            return
+        }
+
         // `--ez settings true` shows the rewrite settings with the saved values; changes go nowhere.
         if (intent.getBooleanExtra("settings", false)) {
             val saved = RewriteStore.of(this).settings()
@@ -135,7 +163,8 @@ class LabActivity : ComponentActivity() {
         val store = LibraryStore(this)
         val vault = Vault.of(this)
         val rewrites = RewriteStore.of(this)
-        val base = rewrites.settings()
+        // This lab targets Ollama models even when the reader currently uses a Grok sign-in.
+        val base = rewrites.settings().copy(provider = com.mdreader.data.RewriteSettings.OLLAMA)
         if (base.apiKey.isBlank()) {
             say("No API key saved. Set it in the reader's rewrite settings first.")
             return

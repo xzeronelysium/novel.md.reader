@@ -53,6 +53,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mdreader.data.RewriteClient
 import com.mdreader.data.RewriteSettings
+import com.mdreader.data.XaiAuth
+import com.mdreader.data.XaiDeviceCode
+import com.mdreader.data.XaiTokens
 import kotlinx.coroutines.launch
 
 /**
@@ -84,6 +87,10 @@ fun RewriteSettingsScreen(
     var memory by remember { mutableIntStateOf(memoryChapters) }
     var readSoFar by remember { mutableStateOf(earlierRead) }
     var confirmRebuild by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // A Grok sign-in in progress: the job waiting on it, and the code it is waiting to be approved.
+    var deviceCode by remember { mutableStateOf<XaiDeviceCode?>(null) }
+    var signInJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     // What is unfinished opens by itself; the rest waits for a tap.
     var open by remember {
         mutableStateOf(
@@ -104,7 +111,11 @@ fun RewriteSettingsScreen(
     }
 
     suspend fun effortsOf(current: RewriteSettings, id: String): List<String> =
-        RewriteClient.efforts(current.baseUrl, current.apiKey, id)
+        if (current.isGrok) {
+            RewriteClient.grokEfforts(id)
+        } else {
+            RewriteClient.efforts(current.baseUrl, current.apiKey, id)
+        }
 
     fun loadModels() {
         status = "Connecting"
@@ -112,11 +123,13 @@ fun RewriteSettingsScreen(
         scope.launch {
             val current = settings
             runCatching {
-                RewriteClient.models(current.baseUrl, current.apiKey)
+                if (current.isGrok) RewriteClient.grokModels(current.xai!!) else RewriteClient.models(current.baseUrl, current.apiKey)
             }.fold(
                 onSuccess = { list ->
                     models = list
                     status = "Connected · ${list.size} models"
+                    // Grok's list carries each model's levels, so read them once it has arrived.
+                    if (settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
                 },
                 onFailure = {
                     statusFailed = true
@@ -135,10 +148,55 @@ fun RewriteSettingsScreen(
         scope.launch { efforts = effortsOf(current, id) }
     }
 
+    /** Ollama Cloud and Grok have different models, so switching starts the choice afresh. */
+    fun switchTo(provider: String) {
+        if (provider == settings.provider) return
+        update(settings.copy(provider = provider, model = "", effort = ""))
+        models = emptyList()
+        efforts = emptyList()
+        status = null
+        statusFailed = false
+        if (settings.signedIn) loadModels()
+    }
+
+    fun openSignInPage(code: XaiDeviceCode) {
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(code.openUrl))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+
+    fun startSignIn() {
+        statusFailed = false
+        status = null
+        signInJob = scope.launch {
+            try {
+                val code = XaiAuth.requestDeviceCode()
+                deviceCode = code
+                openSignInPage(code)
+                val grant = XaiAuth.await(code)
+                XaiTokens.forget()
+                update(settings.copy(xai = grant))
+                status = null
+                loadModels()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                statusFailed = true
+                status = e.message ?: "Grok sign-in failed"
+            } finally {
+                deviceCode = null
+                signInJob = null
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (settings.signedIn) {
             loadModels()
-            if (settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
+            if (!settings.isGrok && settings.model.isNotBlank()) efforts = effortsOf(settings, settings.model)
         }
     }
 
@@ -232,6 +290,7 @@ fun RewriteSettingsScreen(
                         if (shown.isEmpty()) {
                             Micro(
                                 text = when {
+                                    !settings.signedIn && settings.isGrok -> "Sign in with Grok under Connection first"
                                     !settings.signedIn -> "Add the API key under Connection first"
                                     else -> "No model matches"
                                 },
@@ -291,10 +350,52 @@ fun RewriteSettingsScreen(
 
                 Fold(
                     title = "Connection",
-                    value = "Ollama Cloud",
+                    value = if (settings.isGrok) "Grok" else "Ollama Cloud",
                     open = "connection" in open,
                     onToggle = { toggle("connection") },
                 ) {
+                    Segmented(
+                        options = listOf(RewriteSettings.OLLAMA to "Ollama Cloud", RewriteSettings.GROK to "Grok"),
+                        selected = settings.provider,
+                        onSelect = { switchTo(it) },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    if (settings.isGrok) {
+                        when {
+                            deviceCode != null -> {
+                                Note("Approve the sign-in on x.ai. The page asks for this code:")
+                                Text(
+                                    text = deviceCode!!.userCode,
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(vertical = 12.dp),
+                                )
+                                OutlineAction(label = "Open x.ai again", enabled = true, modifier = Modifier.padding(top = 4.dp)) {
+                                    openSignInPage(deviceCode!!)
+                                }
+                                Note("This screen finishes by itself once you approve.")
+                                OutlineAction(label = "Cancel sign-in", enabled = true, modifier = Modifier.padding(top = 16.dp)) {
+                                    signInJob?.cancel()
+                                }
+                            }
+                            signInJob != null -> Note("Asking Grok for a sign-in code…")
+                            settings.xai != null -> {
+                                ValueRow(value = "Signed in with Grok", action = "Sign out", enabled = true, muted = false) {
+                                    XaiTokens.forget()
+                                    update(settings.copy(xai = null, model = "", effort = ""))
+                                    models = emptyList()
+                                    efforts = emptyList()
+                                }
+                                Note("Rewrites use your SuperGrok plan and count against its limits. The sign-in is sealed with the Android Keystore and renews itself.")
+                            }
+                            else -> {
+                                OutlineAction(label = "Sign in with Grok", enabled = true, modifier = Modifier.padding(top = 10.dp)) {
+                                    startSignIn()
+                                }
+                                Note("Shows a code and opens x.ai to approve it. Rewrites then use your SuperGrok plan instead of an API key. This uses the sign-in of xAI's Grok CLI, which xAI has not published as an API.")
+                            }
+                        }
+                    } else {
                     LineField(
                         label = "Base URL",
                         value = settings.baseUrl,
@@ -315,6 +416,7 @@ fun RewriteSettingsScreen(
                         modifier = Modifier.padding(top = 16.dp),
                     ) { loadModels() }
                     Note("The key is sealed with the Android Keystore and only ever sent to this address.")
+                    }
                 }
                 Spacer(Modifier.height(40.dp))
             }
@@ -336,6 +438,7 @@ private fun StatusCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val (headline, ready) = when {
+        !settings.signedIn && settings.isGrok -> "Sign in with Grok to start" to false
         !settings.signedIn -> "Add an API key to start" to false
         connectionFailed -> (connection ?: "Couldn't connect") to false
         settings.model.isBlank() -> "Choose a model" to false
@@ -355,7 +458,7 @@ private fun StatusCard(
             Micro(text = headline, accent = ready, color = if (ready) scheme.primary else scheme.error)
         }
         Spacer(Modifier.height(10.dp))
-        StatusLine("Service", "Ollama Cloud")
+        StatusLine("Service", if (settings.isGrok) "Grok" else "Ollama Cloud")
         StatusLine("Model", settings.model.ifBlank { "—" })
         if (settings.effort.isNotBlank()) StatusLine("Effort", settings.effort.replaceFirstChar(Char::uppercase))
         StatusLine(
