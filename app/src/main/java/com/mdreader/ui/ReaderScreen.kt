@@ -3,6 +3,7 @@ package com.mdreader.ui
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -381,11 +383,9 @@ fun ReaderScreen(
             onIndex = { showChapters = true },
             indexEnabled = chapters.isNotEmpty(),
         )
-        ChapterRail(
-            currentIndex = index,
-            chapterCount = total,
-        )
         RewriteTabs(
+            chapterNumber = index + 1,
+            chapterPercent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent else null,
             showRewrite = showRewrite,
             hasRewrite = rewriteBlocks != null,
             rewriting = rewriting,
@@ -408,6 +408,7 @@ fun ReaderScreen(
             onRewriteAgain = { startRewrite() },
             onSettings = { showRewriteSettings = true },
         )
+        ChapterRail(percent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent ?: 0 else 0)
 
         Box(
             modifier = Modifier
@@ -535,6 +536,10 @@ fun ReaderScreen(
     }
 }
 
+/**
+ * Back, the book's title and INDEX. Touch areas are 48dp; the visible title sits on the text's
+ * 28dp margin, so the bar lines up with everything under it.
+ */
 @Composable
 private fun ReaderTopBar(
     bookTitle: String,
@@ -545,7 +550,8 @@ private fun ReaderTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .height(52.dp)
+            .padding(start = 4.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -560,21 +566,19 @@ private fun ReaderTopBar(
         ) {
             QuietArrow(direction = ArrowDirection.Left)
         }
-
         Text(
             text = bookTitle.uppercase(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
             modifier = Modifier.weight(1f),
         )
-
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .height(48.dp)
                 .clickable(enabled = indexEnabled, onClick = onIndex)
+                .padding(horizontal = 12.dp)
                 .semantics {
                     contentDescription = "Open chapter index"
                     role = Role.Button
@@ -594,24 +598,20 @@ private fun ReaderTopBar(
     }
 }
 
+/** How far through this chapter the reader is: a 2dp line where the text begins. */
 @Composable
-private fun ChapterRail(currentIndex: Int, chapterCount: Int) {
-    val fraction = if (chapterCount > 0) {
-        ((currentIndex + 1).toFloat() / chapterCount).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
+private fun ChapterRail(percent: Int) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(1.dp)
+            .height(2.dp)
             .background(MaterialTheme.colorScheme.outlineVariant),
     ) {
-        if (fraction > 0f) {
+        if (percent > 0) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(fraction)
-                    .height(1.dp)
+                    .fillMaxWidth(percent.coerceIn(0, 100) / 100f)
+                    .height(2.dp)
                     .background(MaterialTheme.colorScheme.primary),
             )
         }
@@ -685,6 +685,7 @@ private fun Ornament() {
     }
 }
 
+/** One 56dp bar: Previous, the chapter number, Next; each pager is a full 48dp target. */
 @Composable
 private fun ReaderFooter(
     index: Int,
@@ -703,57 +704,34 @@ private fun ReaderFooter(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = ScreenPad, end = ScreenPad, top = 15.dp, bottom = 30.dp),
+                .height(56.dp)
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                Pager(
-                    direction = ArrowDirection.Left,
-                    label = "Previous",
-                    arrowFirst = true,
-                    enabled = index > 0,
-                    onClick = onPrevious,
-                )
+                Pager(ArrowDirection.Left, "Prev", arrowFirst = true, enabled = index > 0, onClick = onPrevious)
             }
-
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)) {
-                            append((index + 1).toString().padStart(2, '0'))
-                        }
-                        withStyle(SpanStyle(color = scheme.onSurfaceVariant)) {
-                            append(" / ")
-                            append(total.toString().padStart(2, '0'))
-                        }
-                    },
-                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
-                )
-                if (chapterPercent != null) {
-                    Text(
-                        text = "$chapterPercent%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.semantics {
-                            contentDescription = "$chapterPercent percent of chapter"
-                        },
-                    )
-                }
-            }
-
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)) {
+                        append("%,d".format(index + 1))
+                    }
+                    withStyle(SpanStyle(color = scheme.onSurfaceVariant)) {
+                        append(" / ")
+                        append("%,d".format(total))
+                    }
+                },
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
+                modifier = Modifier.semantics {
+                    contentDescription = "Chapter ${index + 1} of $total" +
+                        (chapterPercent?.let { ", $it percent read" } ?: "")
+                },
+            )
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                Pager(
-                    direction = ArrowDirection.Right,
-                    label = "Next",
-                    arrowFirst = false,
-                    enabled = index < total - 1,
-                    onClick = onNext,
-                )
+                Pager(ArrowDirection.Right, "Next", arrowFirst = false, enabled = index < total - 1, onClick = onNext)
             }
         }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -773,8 +751,9 @@ private fun Pager(
 
     Row(
         modifier = Modifier
+            .height(48.dp)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 2.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (arrowFirst) {
@@ -855,9 +834,15 @@ private fun normalizeHeading(value: String): String =
     value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
 
 
-/** ORIGINAL | REWRITTEN tabs under the chapter rail; the gear opens the rewrite settings. */
+/**
+ * ORIGINAL | REWRITTEN as one square segmented control with the settings gear beside it, then a
+ * line with the chapter's place on the left and the rewrite's action on the right. Everything
+ * visible sits on the text's 28dp margin.
+ */
 @Composable
 private fun RewriteTabs(
+    chapterNumber: Int,
+    chapterPercent: Int?,
     showRewrite: Boolean,
     hasRewrite: Boolean,
     rewriting: Boolean,
@@ -874,10 +859,11 @@ private fun RewriteTabs(
     // Replacing a saved rewrite takes a second tap; the ask resets when the view changes.
     var confirmAgain by remember(showRewrite, hasRewrite, rewriting) { mutableStateOf(false) }
     @Composable
-    fun Tab(label: String, selected: Boolean, accent: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    fun Segment(label: String, selected: Boolean, accent: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
         Box(
             modifier = modifier
-                .height(40.dp)
+                .fillMaxHeight()
+                .background(if (selected) scheme.onSurface else androidx.compose.ui.graphics.Color.Transparent)
                 .clickable(enabled = enabled, onClick = onClick)
                 .semantics { role = Role.Tab },
             contentAlignment = Alignment.Center,
@@ -885,89 +871,106 @@ private fun RewriteTabs(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = when {
+                    selected -> scheme.background
                     !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
                     accent -> scheme.primary
-                    selected -> scheme.onSurface
                     else -> scheme.onSurfaceVariant
                 },
             )
-            if (selected) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(2.dp)
-                        .background(scheme.primary),
-                )
-            }
         }
     }
-    Row(Modifier.fillMaxWidth()) {
-        Tab("ORIGINAL", !showRewrite, false, true, Modifier.weight(1f), onOriginal)
-        Tab(
-            label = when {
-                rewriting -> "● ${words}w"
-                hasRewrite -> "REWRITTEN"
-                else -> "✦ REWRITE"
-            },
-            selected = showRewrite && hasRewrite,
-            accent = rewriting || !hasRewrite,
-            enabled = rewriting || hasRewrite || canStart,
-            modifier = Modifier.weight(1f),
-            onClick = onRewritten,
-        )
-        Tab("⚙", false, false, true, Modifier.width(56.dp), onSettings)
-    }
-    Box(Modifier.fillMaxWidth().height(1.dp).background(scheme.outlineVariant))
-    if (!rewriting && showRewrite && hasRewrite) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = if (confirmAgain) "Replace this rewrite with a new one?" else "Rewritten version",
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant,
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = ScreenPad, end = ScreenPad, top = 4.dp)
+            .height(36.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(Modifier.weight(1f).fillMaxHeight().border(1.dp, scheme.outline)) {
+            Segment("ORIGINAL", !showRewrite, false, true, Modifier.weight(1f), onOriginal)
+            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
+            Segment(
+                label = when {
+                    rewriting -> "● ${words}w"
+                    hasRewrite -> "REWRITTEN"
+                    else -> "✦ REWRITE"
+                },
+                selected = showRewrite && hasRewrite,
+                accent = rewriting || !hasRewrite,
+                enabled = rewriting || hasRewrite || canStart,
                 modifier = Modifier.weight(1f),
+                onClick = onRewritten,
             )
+        }
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .border(1.dp, scheme.outline)
+                .clickable(onClick = onSettings)
+                .semantics {
+                    contentDescription = "Rewrite settings"
+                    role = Role.Button
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("⚙", style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+        }
+    }
+    val place = "CH. %,d".format(chapterNumber) + (chapterPercent?.let { " · $it%" } ?: "")
+    val (left, action, onAction) = when {
+        rewriting -> Triple(
+            listOfNotNull(status, words.takeIf { it > 0 }?.let { "$it words" }).joinToString(" · ")
+                .ifEmpty { "Starting the rewrite. You can keep reading." },
+            "STOP",
+            onStop,
+        )
+        showRewrite && hasRewrite -> Triple(
+            if (confirmAgain) "Replace this rewrite?" else place,
+            if (confirmAgain) "TAP AGAIN TO REPLACE" else "REWRITE AGAIN",
+            {
+                if (confirmAgain) {
+                    confirmAgain = false
+                    onRewriteAgain()
+                } else {
+                    confirmAgain = true
+                }
+            },
+        )
+        else -> Triple(place, null, {})
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ScreenPad)
+            .height(32.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = left,
+            style = MaterialTheme.typography.labelSmall,
+            color = scheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (action != null) {
+            val enabled = rewriting || canStart
             Box(
                 Modifier
-                    .height(36.dp)
-                    .clickable(enabled = canStart) {
-                        if (confirmAgain) {
-                            confirmAgain = false
-                            onRewriteAgain()
-                        } else {
-                            confirmAgain = true
-                        }
-                    }
+                    .height(32.dp)
+                    .clickable(enabled = enabled, onClick = onAction)
                     .padding(start = 12.dp)
                     .semantics { role = Role.Button },
-                contentAlignment = Alignment.Center,
+                contentAlignment = Alignment.CenterEnd,
             ) {
                 Text(
-                    text = if (confirmAgain) "TAP AGAIN TO REPLACE" else "REWRITE AGAIN",
+                    text = action,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (canStart) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    fontWeight = FontWeight.Medium,
+                    color = if (enabled) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
                 )
-            }
-        }
-    }
-    if (rewriting) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = listOfNotNull(status, words.takeIf { it > 0 }?.let { "$it words" }).joinToString(" · ")
-                    .ifEmpty { "Starting the rewrite. You can keep reading the original." },
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            Box(Modifier.height(36.dp).clickable(onClick = onStop).padding(start = 12.dp), contentAlignment = Alignment.Center) {
-                Text("STOP", style = MaterialTheme.typography.labelSmall, color = scheme.primary)
             }
         }
     }
