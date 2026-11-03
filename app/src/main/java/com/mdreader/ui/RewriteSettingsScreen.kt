@@ -321,8 +321,8 @@ fun RewriteSettingsScreen(
                     )
                     Note(
                         when (settings.strength) {
-                            "max" -> "Deepest rewrite. 1.3 to 1.6 times the source length, at least."
-                            else -> "Full rewrite. 1.15 to 1.45 times the source length, at least."
+                            "max" -> "Deepest rewrite. Up to 1.6 times the source length."
+                            else -> "Full rewrite. Up to 1.45 times the source length."
                         },
                     )
                 }

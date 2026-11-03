@@ -226,19 +226,22 @@ object RewriteClient {
     // The default Android agent is refused (403) by the host's firewall.
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     /** Bumped whenever a prompt changes, and stamped into every note, so outputs can be compared. */
-    const val PROMPT_VERSION = "2026-11-03.25"
-    /** Minimum and maximum words for a chapter of [sourceWords], by strength. */
+    const val PROMPT_VERSION = "2026-11-03.26"
+    /**
+     * Floor and ceiling words for [sourceWords], by strength. The ceiling is the real limit; the
+     * floor only catches a scene that dropped content, so a quiet scene may stay short.
+     */
     internal fun lengthTarget(strength: String, sourceWords: Int): Pair<Int, Int> {
         val (low, high) = when (strength) {
-            "max" -> 1.3 to 1.6
-            else -> 1.15 to 1.45
+            "max" -> 0.9 to 1.6
+            else -> 0.9 to 1.45
         }
         return Math.ceil(sourceWords * low).toInt() to Math.ceil(sourceWords * high).toInt()
     }
 
     /** How far this run may go; the rest of the prompt is the same for every chapter. */
     internal fun strengthRule(strength: String): String = when (strength) {
-        "max" -> "STRENGTH: max. Rewrite scenes as deeply as the laws allow. Give crowds, places and violence full, vivid detail, and sharpen every exchange, while keeping every canon rule above."
+        "max" -> "STRENGTH: max. Rewrite scenes as deeply as the laws allow: the fullest staging, the sharpest exchanges and violence at full weight where the scene earns it, while keeping every canon rule above. Quiet scenes still stay quiet."
         else -> "STRENGTH: full. Rewrite each scene so it reads as its best version, keeping every canon rule above."
     }
 
@@ -617,7 +620,7 @@ object Fidelity {
         if (lostLines.isNotEmpty()) out += "Restore these protected phrases in their original context, preserving their wording. Keep speech spoken, thoughts internal and labels as labels: " + lostLines.joinToString(" | ") { "\"$it\"" }
         val count = wordCount(draft)
         if (minWords > 0 && count < minWords * 0.92) {
-            out += "It has $count words; the minimum is $minWords. Add real texture to the beats that matter, not filler."
+            out += "It has $count words, well under the source's length; something may have been dropped. Check every beat and exchange is there; do not pad."
         }
         // Four-letter stems at 45% were measured on real runs: about 1 false alarm in 200 beats,
         // while still catching most beats that are really gone.
@@ -743,7 +746,7 @@ object Fidelity {
         val missing = words(source).filter { w -> w.all(Char::isDigit) && w !in have }.distinct()
         if (missing.isNotEmpty()) problems += "source numbers missing from the revision: ${missing.take(12).joinToString(", ")}"
         val ratio = words(revised).size.toDouble() / words(source).size.coerceAtLeast(1)
-        if (ratio < 0.95) problems += "revision is only ${(ratio * 100).toInt()}% of the source length; beats may have been dropped"
+        if (ratio < 0.85) problems += "revision is only ${(ratio * 100).toInt()}% of the source length; beats may have been dropped"
         if (ratio > 1.6) problems += "revision is ${(ratio * 100).toInt()}% of the source length; it may have padded or invented"
         return problems
     }

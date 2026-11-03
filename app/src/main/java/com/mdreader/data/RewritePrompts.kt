@@ -34,9 +34,11 @@ object RewritePrompts {
         2. SCENES. Split the chapter into scenes of roughly 300 to 900 source words, at natural turns (place, time, focus or mood changes). Scenes cover every paragraph exactly once, in order. For each scene give:
            - type: one of action, dialogue, inner, comedy, system, crowd, travel
            - register: the feeling to amplify (for example comic, grim, tense, tender, awe, eerie)
-           - texture: 3 specific sensory or physical details to add, consistent with the memory and the source
+           - texture: 1 or 2 details only THIS scene could have (not generic weather, smell or light), consistent with the memory and the source
            - sharpen: one exchange or moment to make press harder
            - anchor: one concrete place detail (from the memory if it holds one)
+           - wants: what each character present is after in this scene, and what they leave unsaid or hide, as the source supports it ("none" if nobody wants anything)
+           - pace: quiet, building or loud. Mark a scene quiet when it is a breath between bigger moments, an aftermath or a still beat, so it stays understated and the loud scenes land harder
 
         3. FLAGS. Lines that do not fit the speaker's recorded voice (with a hypothesis: lying, disguised, under stress, or someone else), and contradictions between the source and the memory. Write "- none" if there are none.
 
@@ -46,7 +48,7 @@ object RewritePrompts {
         $BEATS
         1. [P1-P2] <beat> | cause: <cause>
         $SCENES
-        S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b>; <c> | sharpen: <moment> | anchor: <detail>
+        S1 | P1-P9 | type: <type> | register: <register> | texture: <a>; <b> | sharpen: <moment> | anchor: <detail> | wants: <who wants what; what goes unsaid> | pace: <quiet|building|loud>
         $FLAGS
         - <flag>
         $KEEP
@@ -85,9 +87,11 @@ object RewritePrompts {
         - Amplify the register you are given. Comic scenes get funnier, grim scenes heavier, tense scenes tighter.
         - Emotion is shown through the body and through choices, never named ("he was furious" is banned).
         - Let each line carry its intent clearly; tension, evasion or subtext only where the source has it.
-        - Crowds and minor characters each get a small, specific moment. Never two identical reactions in a row.
+        - Everyone in the scene is after something; let their wants rub against each other. Show what goes unsaid through choices, evasions and what people do instead of saying it, never by naming the subtext.
+        - When a crowd or minor character matters to the moment, give one of them a specific action. Not every crowd needs individuals; never repeat the same kind of bystander beat from scene to scene.
+        - Restraint: a quiet scene stays understated, with plain prose, little added detail and room to breathe. Not every moment is loud.
         - Violence and gore at full weight, in plain exact words. Never softened, skipped or summarised.
-        - Use the texture, sharpen and anchor notes you are given.
+        - Use the texture, sharpen, anchor, wants and pace notes you are given.
 
         STYLE
         - Everyday words. Short, clear sentences, with a short one for impact. Rich, never ornate.
@@ -152,7 +156,7 @@ object RewritePrompts {
         - Em dashes as all-purpose punctuation. Use commas, full stops and colons.
         - Repeating the same sentence shape: vary length and structure the way human prose does.
 
-        LENGTH IS A MINIMUM. The message gives the minimum and maximum words for this scene. Reach the minimum with real texture on the beats that matter, never with filler, repetition or summary.
+        LENGTH IS A CEILING, NOT A TARGET. Spend words where the scene lives: the exchanges, the turns, the moments that cost something. Never pad to look fuller. A tight scene that lands beats a long one that drags. Do keep every beat and exchange.
     """.trimIndent()
 
     /** How each kind of scene is enhanced; only the scene's own method is sent. */
@@ -162,7 +166,7 @@ object RewritePrompts {
         "inner" to "SCENE METHOD (inner thought and explanation): do not paraphrase a block of thinking. Put the character in the present moment, doing something with their hands or body, and let each fact arrive as something they notice, remember, test or decide. Keep every fact and every number of the explanation.",
         "comedy" to "SCENE METHOD (comedy): set up, then a specific absurd detail, then an undercut, then a beat for the reaction. Timing matters more than adjectives. Let the straight man stay straight.",
         "system" to "SCENE METHOD (system and status screens): keep every screen as a blockquote with the same entries, names and numbers, its wording cleaned up where the source is clumsy. The feeling lives in the character's reaction before and after: what they expected, what they see, what they do next.",
-        "crowd" to "SCENE METHOD (crowds and groups): pick 2 or 3 individuals in the crowd and give each one small, specific action or line. The crowd's mood moves; it does not just gasp.",
+        "crowd" to "SCENE METHOD (crowds and groups): pick one or two individuals whose reaction matters and give each a specific action or line; skip it when the crowd is just background. The crowd's mood moves; it does not just gasp.",
         "travel" to "SCENE METHOD (travel and transitions): compress the trip, keep one strong place anchor and one physical sensation of moving through it, and arrive quickly.",
     )
 

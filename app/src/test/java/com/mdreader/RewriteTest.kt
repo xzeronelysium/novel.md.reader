@@ -41,8 +41,9 @@ class RewriteTest {
     }
 
     @Test fun lengthTargetsFollowStrength() {
-        assertEquals(1150 to 1450, RewriteClient.lengthTarget("full", 1000))
-        assertEquals(1300 to 1600, RewriteClient.lengthTarget("max", 1000))
+        // A floor only against dropped content; the ceiling is the real limit.
+        assertEquals(900 to 1450, RewriteClient.lengthTarget("full", 1000))
+        assertEquals(900 to 1600, RewriteClient.lengthTarget("max", 1000))
     }
 
     @Test fun carryNoteDropsBookkeeping() {
@@ -63,13 +64,16 @@ class RewriteTest {
         val paras = List(6) { "word ".repeat(120).trim() }
         val raw = "<think>hm</think>=== BEATS ===\n1. [P1-P2] Sunny kills the larva | cause: it attacked him\n2. [P5] He rests | cause: unknown\n" +
             "=== SCENES ===\nS1 | P1-P3 | type: action | register: grim | texture: a; b; c | sharpen: x | anchor: y\n" +
-            "S2 | P4-P6 | type: inner | register: tense | texture: d | sharpen: z | anchor: w\n=== FLAGS ===\n- none"
+            "S2 | P4-P6 | type: inner | register: tense | texture: d | sharpen: z | anchor: w | wants: Sunny wants out; hides his fear | pace: quiet\n=== FLAGS ===\n- none"
         val plan = RewritePipeline.parsePlan(raw, paras)
         assertEquals(2, plan.beats.size)
         assertEquals("Sunny kills the larva", plan.beats[0].text)
         assertEquals("it attacked him", plan.beats[0].cause)
         assertEquals(listOf(1 to 3, 4 to 6), plan.scenes.map { it.from to it.to })
         assertEquals("action", plan.scenes[0].type)
+        assertEquals("Sunny wants out; hides his fear", plan.scenes[1].wants)
+        assertEquals("quiet", plan.scenes[1].pace)
+        assertEquals("full", plan.scenes[0].pace)
         assertEquals(0, plan.flags.size)
     }
 
@@ -205,7 +209,7 @@ class RewriteTest {
         val draft = "The older soldier watched. The older soldier frowned. The older soldier left. An enigmatic Shadow Pact formed. He was a ten-year-old."
         val problems = Fidelity.sceneProblems(source, draft, listOf("Sunny killed the larva quickly"), 60, "")
         val text = problems.joinToString("\n")
-        assert(text.contains("minimum")) { text }
+        assert(text.contains("under the source")) { text }
         assert(text.contains("beats are missing")) { text }
         assert(text.contains("numbers")) { text }
         assert(text.contains("enigmatic")) { text }

@@ -24,6 +24,10 @@ object RewritePipeline {
         val texture: String = "",
         val sharpen: String = "",
         val anchor: String = "",
+        /** What each character is after, and what goes unsaid. */
+        val wants: String = "",
+        /** quiet, building, loud; or "full" when the plan does not say. */
+        val pace: String = "full",
     )
 
     /** [keep]: spoken phrases whose exact wording matters, such as catchphrases and wordplay. */
@@ -81,14 +85,14 @@ object RewritePipeline {
             val user = buildString {
                 append(memory)
                 if (before != null) append(before).append("\n\n")
-                append("PLAN FOR THIS SCENE: type ${scene.type}; register ${scene.register}; texture ${scene.texture}; sharpen ${scene.sharpen}; anchor ${scene.anchor}\n\n")
+                append("PLAN FOR THIS SCENE: type ${scene.type}; register ${scene.register}; texture ${scene.texture}; sharpen ${scene.sharpen}; anchor ${scene.anchor}; wants ${scene.wants}; pace ${scene.pace}\n\n")
                 if (beats.isNotEmpty()) append("BEATS THAT MUST HAPPEN, IN ORDER:\n").append(beats.joinToString("\n") { "- ${it.text} (cause: ${it.cause})" }).append("\n\n")
                 if (keep.isNotEmpty()) append("PROTECTED PHRASES (retain wording in the source's original context and role; other wording may improve. If the plan selected a thought or label, keep it as such, never force it into speech):\n").append(keep.joinToString("\n") { "- $it" }).append("\n\n")
                 if (i > 0) append("If this scene opens at a new time or place compared with the scene before, start it with a line containing only ---.\n\n")
                 if (i == plan.scenes.lastIndex) {
                     append("THIS IS THE LAST SCENE OF THE CHAPTER. End on the same moment, line and feeling as the source's last paragraph; add nothing after it.\n\n")
                 }
-                append("LENGTH: the source scene has ${Fidelity.wordCount(source)} words. Write at least $minWords words and at most about $maxWords.\n\n")
+                append("LENGTH: the source scene has ${Fidelity.wordCount(source)} words. Use what the scene needs, at most about $maxWords; a quiet scene may stay close to the source's length.\n\n")
                 append("SOURCE SCENE (Ch $number, $title):\n\n").append(source)
             }
             val system = RewritePrompts.WRITE + "\n\n" + (RewritePrompts.METHODS[scene.type] ?: "") + "\n\n" + RewriteClient.strengthRule(settings.strength)
@@ -140,7 +144,7 @@ object RewritePipeline {
             if (noteBody.isNotEmpty()) append("\n\n").append(noteBody)
             append("\n## Voice flags and conflicts\n").append(plan.flags.ifEmpty { listOf("none") }.joinToString("\n") { "- $it" })
             append("\n\n## Enhancement plan\n")
-            append(plan.scenes.withIndex().joinToString("\n") { (i, s) -> "S${i + 1} | P${s.from}-P${s.to} | ${s.type} | ${s.register} | ${s.texture} | ${s.sharpen} | ${s.anchor}" })
+            append(plan.scenes.withIndex().joinToString("\n") { (i, s) -> "S${i + 1} | P${s.from}-P${s.to} | ${s.type} | ${s.register} | ${s.texture} | ${s.sharpen} | ${s.anchor} | ${s.wants} | ${s.pace}" })
             if (plan.keep.isNotEmpty()) append("\n\n## Protected dialogue\n").append(plan.keep.joinToString("\n") { "- $it" })
             if (warnings.isNotEmpty()) append("\n\n## Fidelity warnings\n").append(warnings.joinToString("\n") { "- $it" })
             append("\n\n## Run\n- prompt ${RewriteClient.PROMPT_VERSION}\n- model ${settings.model}")
@@ -180,7 +184,8 @@ object RewritePipeline {
             val to = r.groupValues[2].toIntOrNull() ?: from
             fun field(name: String) = parts.firstOrNull { it.startsWith("$name:", ignoreCase = true) }?.substringAfter(':')?.trim().orEmpty()
             Scene(from, to, field("type").lowercase().takeIf { it in RewritePrompts.METHODS } ?: "inner",
-                field("register"), field("texture"), field("sharpen"), field("anchor"))
+                field("register"), field("texture"), field("sharpen"), field("anchor"), field("wants"),
+                field("pace").lowercase().takeIf { it in setOf("quiet", "building", "loud") } ?: "full")
         }
 
         val flags = section(RewritePrompts.FLAGS, RewritePrompts.KEEP).lines().map { it.trim() }
