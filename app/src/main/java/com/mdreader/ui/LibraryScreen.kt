@@ -58,6 +58,7 @@ fun LibraryScreen(
     importing: Boolean,
     snackbarHostState: SnackbarHostState,
     onImport: () -> Unit,
+    onBrowse: () -> Unit,
     onOpen: (Project) -> Unit,
     onRefresh: (Project) -> Unit,
     onRemove: (Project) -> Unit,
@@ -143,7 +144,7 @@ fun LibraryScreen(
                 }
             }
 
-            LibraryFooter(onImport = onImport)
+            LibraryFooter(onImport = onImport, onBrowse = onBrowse)
         }
 
         SnackbarHost(
@@ -386,7 +387,7 @@ private fun EmptyLibrary(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun LibraryFooter(onImport: () -> Unit) {
+private fun LibraryFooter(onImport: () -> Unit, onBrowse: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Hairline()
         Row(
@@ -398,9 +399,12 @@ private fun LibraryFooter(onImport: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ImportAction(onClick = onImport)
-            Micro(
-                text = "V1.1",
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            Text(
+                text = "FREE WEB NOVEL",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onBrowse),
             )
         }
     }

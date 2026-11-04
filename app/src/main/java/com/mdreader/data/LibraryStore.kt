@@ -33,8 +33,12 @@ class LibraryStore(context: Context) {
     @Synchronized
     fun addOrReplace(project: Project) {
         ensureLoaded()
-        val index = projects.indexOfFirst {
-            it.id == project.id || it.treeUri == project.treeUri
+        val index = projects.indexOfFirst { existing ->
+            existing.id == project.id ||
+                (project.treeUri.isNotBlank() && existing.treeUri == project.treeUri) ||
+                (project.remoteUrl.isNotBlank() &&
+                    existing.source == project.source &&
+                    existing.remoteUrl == project.remoteUrl)
         }
         if (index >= 0) {
             // Keep the original id so saved progress still points at this project.
@@ -102,6 +106,7 @@ class LibraryStore(context: Context) {
                             Chapter(
                                 name = chapter.getString("name"),
                                 uri = chapter.getString("uri"),
+                                displayTitle = chapter.optString("title").takeIf { chapter.has("title") && it.isNotBlank() },
                             )
                         )
                     }
@@ -109,9 +114,11 @@ class LibraryStore(context: Context) {
                 projects += Project(
                     id = item.getString("id"),
                     name = item.optString("name", "Untitled"),
-                    treeUri = item.getString("treeUri"),
+                    treeUri = item.optString("treeUri"),
                     chapters = chapters,
                     importedAt = item.optLong("importedAt", 0L),
+                    source = item.optString("source", SOURCE_LOCAL).ifBlank { SOURCE_LOCAL },
+                    remoteUrl = item.optString("remoteUrl"),
                 )
             }
 
@@ -122,6 +129,7 @@ class LibraryStore(context: Context) {
                     chapterIndex = value.optInt("chapterIndex", 0),
                     scrollIndex = value.optInt("scrollIndex", 0),
                     scrollOffset = value.optInt("scrollOffset", 0),
+                    chapterUri = value.optString("chapterUri"),
                 )
             }
 
@@ -144,6 +152,9 @@ class LibraryStore(context: Context) {
                     JSONObject()
                         .put("name", chapter.name)
                         .put("uri", chapter.uri)
+                        .apply {
+                            chapter.displayTitle?.takeIf { it.isNotBlank() }?.let { put("title", it) }
+                        }
                 )
             }
             projectArray.put(
@@ -151,6 +162,8 @@ class LibraryStore(context: Context) {
                     .put("id", project.id)
                     .put("name", project.name)
                     .put("treeUri", project.treeUri)
+                    .put("source", project.source)
+                    .put("remoteUrl", project.remoteUrl)
                     .put("importedAt", project.importedAt)
                     .put("chapters", chaptersArray)
             )
@@ -165,6 +178,7 @@ class LibraryStore(context: Context) {
                     .put("chapterIndex", progress.chapterIndex)
                     .put("scrollIndex", progress.scrollIndex)
                     .put("scrollOffset", progress.scrollOffset)
+                    .put("chapterUri", progress.chapterUri)
             )
         }
         root.put("progress", progressObject)

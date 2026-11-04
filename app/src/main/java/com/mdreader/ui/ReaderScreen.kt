@@ -73,13 +73,19 @@ fun ReaderScreen(
     onTextSizeChange: (Int) -> Unit,
     onBack: () -> Unit,
     onProgress: (Progress) -> Unit,
+    loadChapter: (suspend (Chapter) -> List<Block>)? = null,
 ) {
     val context = LocalContext.current
     val chapters = project.chapters
     val lastIndex = chapters.lastIndex
 
+    val restoredIndex = initialProgress?.chapterUri
+        ?.takeIf { it.isNotBlank() }
+        ?.let { uri -> chapters.indexOfFirst { it.uri == uri }.takeIf { it >= 0 } }
+        ?: initialProgress?.chapterIndex
+        ?: 0
     var index by rememberSaveable(project.id) {
-        mutableIntStateOf((initialProgress?.chapterIndex ?: 0).coerceIn(0, lastIndex.coerceAtLeast(0)))
+        mutableIntStateOf(restoredIndex.coerceIn(0, lastIndex.coerceAtLeast(0)))
     }
     var blocks by remember(project.id) { mutableStateOf<List<Block>>(emptyList()) }
     var loading by remember(project.id) { mutableStateOf(true) }
@@ -99,17 +105,23 @@ fun ReaderScreen(
         }
 
         val outcome = withContext(Dispatchers.IO) {
-            runCatching { ChapterSource.read(context, Uri.parse(chapter.uri)) }
+            runCatching {
+                val loader = loadChapter
+                if (loader != null) {
+                    loader(chapter)
+                } else {
+                    MarkdownParser
+                        .parse(ChapterSource.read(context, Uri.parse(chapter.uri)), chapter.isMarkdown)
+                        .withoutOpeningTitle(chapter.title)
+                }
+            }
         }
         outcome.fold(
-            onSuccess = { text ->
-                blocks = MarkdownParser
-                    .parse(text, chapter.isMarkdown)
-                    .withoutOpeningTitle(chapter.title)
-            },
+            onSuccess = { blocks = it },
             onFailure = {
                 blocks = emptyList()
-                loadError = "Couldn't open \"${chapter.name}\". The folder may have moved, " +
+                loadError = it.message?.takeIf { message -> message.isNotBlank() }
+                    ?: "Couldn't open \"${chapter.name}\". The folder may have moved, " +
                     "been renamed, or lost its permission."
             },
         )
@@ -131,17 +143,24 @@ fun ReaderScreen(
         }
     }
 
+    fun currentProgress(): Progress = Progress(
+        chapterIndex = index,
+        scrollIndex = listState.firstVisibleItemIndex,
+        scrollOffset = listState.firstVisibleItemScrollOffset,
+        chapterUri = chapters.getOrNull(index)?.uri.orEmpty(),
+    )
+
     LaunchedEffect(project.id, index) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
             .debounce(500)
             .collect { (scrollIndex, scrollOffset) ->
                 // Ignore positions from the previous chapter while the new one loads.
-                if (!loading) onProgress(Progress(index, scrollIndex, scrollOffset))
+                if (!loading) onProgress(currentProgress())
             }
     }
 
     fun saveAndLeave() {
-        onProgress(Progress(index, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset))
+        onProgress(currentProgress())
         onBack()
     }
 
