@@ -29,9 +29,18 @@ fits together.
 
 Under the chapter rail, **ORIGINAL | REWRITE | ⚙** rewrites the open chapter
 with a model on Ollama Cloud (base URL and API key in ⚙; the key is sealed with
-the Android Keystore). The same events, better told: every beat, name and number
+the Android Keystore) or on a SuperGrok subscription (⚙ → Connection → Grok: the
+app shows a code, you approve it on x.ai, and the grant is sealed and renews
+itself; it uses the sign-in of xAI's Grok CLI, which xAI has not published as an
+API). The same events, better told: every beat, name and number
 kept, with texture, staging and sharper dialogue added. The original is never
 touched, and one tap flips between the two.
+
+**Rewrite ahead** (⚙ → Rewrite ahead) rewrites a run of chapters, from one number
+to another, in order, so they are ready before you read them. It runs as a
+background service with a progress notification and a Stop button, skips chapters
+that already have a rewrite (or redoes them), and stops at the first failure,
+keeping what it finished.
 
 A rewrite is one fixed script, no agent loop:
 

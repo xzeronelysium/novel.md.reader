@@ -21,8 +21,14 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Where a rewrite runs: Ollama Cloud, an OpenAI-compatible `/chat/completions` endpoint with an API key. */
+/**
+ * Where a rewrite runs: Ollama Cloud (an OpenAI-compatible `/chat/completions` endpoint with an API
+ * key) or Grok (a SuperGrok subscription signed in with xAI's device code, through the CLI chat
+ * proxy's Responses API).
+ */
 data class RewriteSettings(
+    /** "ollama" or "grok". */
+    val provider: String = OLLAMA,
     val baseUrl: String = "https://ollama.com/v1",
     val apiKey: String = "",
     val model: String = "",
@@ -30,10 +36,19 @@ data class RewriteSettings(
     val effort: String = "",
     /** How many earlier chapters the memory reads before a rewrite; 0 reads from chapter 1. */
     val memoryDepth: Int = 20,
+    /** The Grok sign-in, when there is one. */
+    val xai: XaiCredential? = null,
 ) {
-    val signedIn: Boolean get() = baseUrl.isNotBlank() && apiKey.isNotBlank()
+    val isGrok: Boolean get() = provider == GROK
+
+    val signedIn: Boolean get() = if (isGrok) xai != null else baseUrl.isNotBlank() && apiKey.isNotBlank()
 
     val ready: Boolean get() = signedIn && model.isNotBlank()
+
+    companion object {
+        const val OLLAMA = "ollama"
+        const val GROK = "grok"
+    }
 }
 
 /** Seals the API key before it touches disk. */
@@ -96,6 +111,7 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     fun settings(): RewriteSettings = runCatching {
         val json = JSONObject(settingsFile.readText())
         RewriteSettings(
+            provider = json.optString("provider", RewriteSettings.OLLAMA),
             baseUrl = json.optString("baseUrl", RewriteSettings().baseUrl),
             // `apiKey` is the plaintext of an earlier version; it is re-sealed on the next save.
             apiKey = json.optString("apiKeyEnc").takeIf { it.isNotEmpty() }?.let(box::open)
@@ -103,15 +119,25 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
             model = json.optString("model"),
             effort = json.optString("effort"),
             memoryDepth = json.optInt("memoryDepth", 20).coerceAtLeast(0),
+            xai = json.optString("xaiEnc").takeIf { it.isNotEmpty() }?.let(box::open)?.let(XaiCredential::fromJson),
         ).also { loaded ->
             // Fields of earlier versions (the ChatGPT sign-in, strength) are dropped by one rewrite of the file.
-            if (listOf("chatgptEnc", "deviceId", "provider", "strength").any(json::has)) saveSettings(loaded)
+            if (listOf("chatgptEnc", "deviceId", "strength").any(json::has)) saveSettings(loaded)
         }
     }.getOrDefault(RewriteSettings())
 
     @Synchronized
     fun saveSettings(settings: RewriteSettings) {
+        // A screen holding an older copy of the Grok grant must not undo a renewal made since:
+        // the refresh token may rotate, so the older one may no longer work.
+        val stored = runCatching {
+            JSONObject(settingsFile.readText()).optString("xaiEnc").takeIf { it.isNotEmpty() }
+                ?.let(box::open)?.let(XaiCredential::fromJson)
+        }.getOrNull()
+        val grant = settings.xai?.let { given -> if (stored != null && stored.expires > given.expires) stored else given }
         val json = JSONObject()
+            .put("provider", settings.provider)
+            .apply { grant?.let { put("xaiEnc", box.seal(it.toJson())) } }
             .put("baseUrl", settings.baseUrl.trim())
             .put("apiKeyEnc", box.seal(settings.apiKey.trim()))
             .put("model", settings.model.trim())
@@ -141,6 +167,11 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
         atomicWrite(noteFile(project, chapter), rewrite.note)
         atomicWrite(file, rewrite.chapter)
     }
+
+    /** Positions of the chapters that already have a saved rewrite. */
+    @Synchronized
+    fun rewrittenPositions(project: Project, chapters: List<Chapter>): Set<Int> =
+        chapters.indices.filter { chapterFile(project, chapters[it]).isFile }.toSet()
 
     @Synchronized
     fun delete(project: Project, chapter: Chapter) {
@@ -176,7 +207,9 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     }
 
     companion object {
-        fun of(context: android.content.Context) = RewriteStore(context.filesDir, KeystoreSecretBox)
+        fun of(context: android.content.Context) = RewriteStore(context.filesDir, KeystoreSecretBox).also { store ->
+            XaiTokens.save = { fresh -> store.saveSettings(store.settings().copy(xai = fresh)) }
+        }
     }
 }
 
@@ -241,21 +274,34 @@ object RewriteClient {
         onProgress: (Int) -> Unit,
         temperature: Double = EXACT,
     ): String = withContext(Dispatchers.IO) {
-        require(settings.ready) { "Set the endpoint, key and model first." }
-        send(settings, system, user, onProgress, temperature)
+        require(settings.ready) { if (settings.isGrok) "Sign in with Grok and choose a model first." else "Set the endpoint, key and model first." }
+        try {
+            send(settings, system, user, onProgress, temperature)
+        } catch (e: TemperatureRefused) {
+            // Learned from the answer, not from the model's name: next time it goes without.
+            synchronized(noTemperature) { noTemperature += settings.model }
+            send(settings, system, user, onProgress, null)
+        }
     }
+
+    /** Models that answered "temperature is not supported"; asked again without one. */
+    private val noTemperature = mutableSetOf<String>()
+
+    private class TemperatureRefused : IOException("temperature not supported")
 
     private suspend fun send(
         settings: RewriteSettings,
         system: String,
         user: String,
         onProgress: (Int) -> Unit,
-        temperature: Double,
+        requested: Double?,
     ): String {
-        val body = JSONObject()
+        val grok = settings.isGrok
+        val temperature = requested?.takeUnless { grok && synchronized(noTemperature) { settings.model in noTemperature } }
+        val body = if (grok) responsesBody(settings, system, user, temperature) else JSONObject()
             .put("model", settings.model)
             .put("stream", true)
-            .put("temperature", temperature)
+            .apply { temperature?.let { put("temperature", it) } }
             .apply { if (settings.effort.isNotBlank()) put("reasoning_effort", settings.effort) }
             .put(
                 "messages",
@@ -264,8 +310,12 @@ object RewriteClient {
                     .put(JSONObject().put("role", "user").put("content", user)),
             )
             .toString()
-        val bearer = settings.apiKey.trim()
-        val url = settings.baseUrl.trim().trimEnd('/') + "/chat/completions"
+        val headers = if (grok) {
+            XaiAuth.proxyHeaders(XaiTokens.access(settings.xai!!), settings.model, java.util.UUID.randomUUID().toString())
+        } else {
+            mapOf("Authorization" to "Bearer ${settings.apiKey.trim()}", "User-Agent" to USER_AGENT)
+        }
+        val url = if (grok) "${XaiAuth.PROXY}/responses" else settings.baseUrl.trim().trimEnd('/') + "/chat/completions"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = CONNECT_TIMEOUT_MS
@@ -274,8 +324,7 @@ object RewriteClient {
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "text/event-stream")
-            setRequestProperty("Authorization", "Bearer $bearer")
-            setRequestProperty("User-Agent", USER_AGENT)
+            headers.forEach { (k, v) -> setRequestProperty(k, v) }
         }
         // A blocked read does not notice cancellation; closing the socket does.
         val job = currentCoroutineContext()[Job]
@@ -285,13 +334,20 @@ object RewriteClient {
             val code = connection.responseCode
             if (code !in 200..299) {
                 val text = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (grok && code == 400 && temperature != null &&
+                    (errorParam(text) == "temperature" || errorMessage(text).contains("temperature", ignoreCase = true))
+                ) throw TemperatureRefused()
+                if (grok) android.util.Log.w("MDReaderRewrite", "Grok answered $code: ${text.take(600)}")
+                if (grok && code == 401) throw IOException("Grok no longer accepts this sign-in. Sign in again in the settings.")
+                if (grok && code == 403) throw IOException("Grok refused this account's subscription for rewrites (403). Check that SuperGrok is active.")
                 throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
             }
             val answer = StringBuilder()
             connection.inputStream.bufferedReader().useLines { lines ->
                 for (line in lines) {
                     currentCoroutineContext().ensureActive()
-                    val delta = deltaOf(line) ?: continue
+                    if (grok) responsesErrorOf(line)?.let { throw IOException(it) }
+                    val delta = (if (grok) responsesDeltaOf(line) else deltaOf(line)) ?: continue
                     answer.append(delta)
                     onProgress(answer.length)
                 }
@@ -301,6 +357,43 @@ object RewriteClient {
             watcher?.dispose()
             connection.disconnect()
         }
+    }
+
+    /** A Responses API request: the system prompt as instructions, the rest as one user message. */
+    internal fun responsesBody(settings: RewriteSettings, system: String, user: String, temperature: Double?): String =
+        JSONObject()
+            .put("model", settings.model)
+            .put("stream", true)
+            .put("store", false)
+            .put("instructions", system)
+            .put(
+                "input",
+                JSONArray().put(
+                    JSONObject().put("role", "user")
+                        .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", user))),
+                ),
+            )
+            .apply { temperature?.let { put("temperature", it) } }
+            .apply { if (settings.effort.isNotBlank()) put("reasoning", JSONObject().put("effort", settings.effort)) }
+            .toString()
+
+    /** The text a Responses `data:` line adds: only `response.output_text.delta` events carry any. */
+    internal fun responsesDeltaOf(line: String): String? {
+        if (!line.startsWith("data:")) return null
+        val json = runCatching { JSONObject(line.removePrefix("data:").trim()) }.getOrNull() ?: return null
+        return if (json.optString("type") == "response.output_text.delta") json.optString("delta").takeIf { it.isNotEmpty() } else null
+    }
+
+    /** A failure reported inside the stream (`error` or `response.failed`), as a message to show. */
+    internal fun responsesErrorOf(line: String): String? {
+        if (!line.startsWith("data:")) return null
+        val json = runCatching { JSONObject(line.removePrefix("data:").trim()) }.getOrNull() ?: return null
+        val message = when (json.optString("type")) {
+            "error" -> json.optString("message").ifBlank { json.optJSONObject("error")?.optString("message").orEmpty() }
+            "response.failed" -> json.optJSONObject("response")?.optJSONObject("error")?.optString("message").orEmpty()
+            else -> return null
+        }
+        return "Grok stopped: " + message.ifBlank { "unknown error" }.take(160)
     }
 
     /** The text a server-sent `data:` line adds to the answer; null for anything else. */
@@ -326,6 +419,62 @@ object RewriteClient {
         // Never the raw body: an HTML error page is noise in a phone dialog.
         else -> listOf("The service answered $code.", errorMessage(body)).filter { it.isNotBlank() }.joinToString(" ")
     }
+
+    /**
+     * The models this Grok subscription can write with, from the CLI chat proxy's `/models`. Each
+     * model's effort levels come with it when the list names them.
+     */
+    suspend fun grokModels(credential: XaiCredential): List<String> {
+        val token = XaiTokens.access(credential)
+        val text = withContext(Dispatchers.IO) { get("${XaiAuth.PROXY}/models", XaiAuth.proxyHeaders(token)) }
+        val listed = XaiModels.parse(text)
+        if (listed.isEmpty()) throw IOException("Grok listed no models for this account.")
+        synchronized(effortCache) { listed.forEach { (id, levels) -> if (levels != null) effortCache[id] = levels } }
+        return listed.map { it.first }
+    }
+
+    /** What the model list answers, for the debug lab: status and model count, never the token. */
+    suspend fun grokModelReport(credential: XaiCredential): List<String> {
+        val token = XaiTokens.access(credential)
+        return listOf("${XaiAuth.PROXY}/models").map { url ->
+            runCatching { withContext(Dispatchers.IO) { get(url, XaiAuth.proxyHeaders(token)) } }.fold(
+                onSuccess = { text ->
+                    val listed = XaiModels.parse(text)
+                    "$url → OK, ${listed.size} models: " + listed.joinToString { (id, levels) -> "$id${levels?.let { " $it" }.orEmpty()}" } +
+                        if (listed.isEmpty()) " | body: " + text.take(300) else ""
+                },
+                onFailure = { "$url → ${it.message}" },
+            )
+        }
+    }
+
+    /** A GET with the given headers; throws the short failure message on non-2xx. */
+    private fun get(url: String, headers: Map<String, String>): String {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = 30_000
+            setRequestProperty("Accept", "application/json")
+            headers.forEach { (k, v) -> setRequestProperty(k, v) }
+        }
+        try {
+            val code = connection.responseCode
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IOException(failure(code, connection.getHeaderField("Retry-After"), text))
+            return text
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** The effort levels a Grok model takes, as its list named them; none when it did not say. */
+    fun grokEfforts(model: String): List<String> = synchronized(effortCache) { effortCache[model] } ?: emptyList()
+
+    private val effortCache = mutableMapOf<String, List<String>>()
+
+    /** The request field an OpenAI error is about, such as "temperature" or "reasoning.effort". */
+    internal fun errorParam(errorBody: String): String? =
+        runCatching { JSONObject(errorBody).optJSONObject("error")?.optString("param") }.getOrNull()?.takeIf { it.isNotBlank() }
 
     /** Model ids the endpoint offers (`GET /models`), sorted. */
     suspend fun models(baseUrl: String, apiKey: String): List<String> = withContext(Dispatchers.IO) {
@@ -375,7 +524,7 @@ object RewriteClient {
 
     /**
      * The JSON error's message, or nothing: a body that isn't JSON (an HTML page) is never shown.
-     * Usually `{"error": {"message"}}`; some services answer `{"detail": "..."}`.
+     * OpenAI's shape is `{"error": {"message"}}`; some routes answer `{"detail": "..."}`.
      */
     private fun errorMessage(text: String): String =
         runCatching {
