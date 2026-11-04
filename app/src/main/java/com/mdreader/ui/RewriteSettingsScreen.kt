@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.mdreader.data.BatchRewrite
 import com.mdreader.data.RewriteClient
 import com.mdreader.data.RewriteSettings
 import com.mdreader.data.XaiAuth
@@ -64,6 +66,19 @@ import kotlinx.coroutines.launch
  * language: hairlines, small uppercase labels, square shapes, one vermilion accent. Every change is
  * saved at once, so leaving the page is all it takes.
  */
+/** The novel the settings were opened from, for rewriting a run of its chapters ahead of reading. */
+data class AheadSetup(
+    val projectId: String,
+    /** One label per chapter position, like "Chapter 14 · The Gate". */
+    val chapterLabels: List<String>,
+    /** The open chapter's position: where the run starts by default. */
+    val currentIndex: Int,
+    /** Positions that already have a rewrite. */
+    val rewritten: Set<Int>,
+    /** True while the open chapter is being rewritten on its own. */
+    val busy: Boolean = false,
+)
+
 @Composable
 fun RewriteSettingsScreen(
     initial: RewriteSettings,
@@ -73,6 +88,9 @@ fun RewriteSettingsScreen(
     onChange: (RewriteSettings) -> Unit,
     onRebuildMemory: () -> Unit,
     onBack: () -> Unit,
+    ahead: AheadSetup? = null,
+    onStartAhead: (List<Int>) -> Unit = {},
+    onStopAhead: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
@@ -88,6 +106,19 @@ fun RewriteSettingsScreen(
     var readSoFar by remember { mutableStateOf(earlierRead) }
     var confirmRebuild by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val batch by BatchRewrite.state.collectAsState()
+    val chapterCount = ahead?.chapterLabels?.size ?: 0
+    var fromText by remember { mutableStateOf(((ahead?.currentIndex ?: 0) + 1).toString()) }
+    var toText by remember { mutableStateOf(minOf((ahead?.currentIndex ?: 0) + 10, maxOf(chapterCount, 1)).toString()) }
+    var redo by remember { mutableStateOf(false) }
+    var pendingQueue by remember { mutableStateOf<List<Int>?>(null) }
+    // Android 13+ asks before showing the progress notification; the run starts either way.
+    val notifications = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) {
+        pendingQueue?.let(onStartAhead)
+        pendingQueue = null
+    }
     // A Grok sign-in in progress: the job waiting on it, and the code it is waiting to be approved.
     var deviceCode by remember { mutableStateOf<XaiDeviceCode?>(null) }
     var signInJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -416,6 +447,80 @@ fun RewriteSettingsScreen(
                         modifier = Modifier.padding(top = 16.dp),
                     ) { loadModels() }
                     Note("The key is sealed with the Android Keystore and only ever sent to this address.")
+                    }
+                }
+
+                if (ahead != null && chapterCount > 0) {
+                    val mine = batch.projectId == ahead.projectId
+                    val running = batch.running && mine
+                    val from = fromText.toIntOrNull()?.takeIf { it in 1..chapterCount }?.minus(1)
+                    val to = toText.toIntOrNull()?.takeIf { it in 1..chapterCount }?.minus(1)
+                    val queue = if (from != null && to != null) BatchRewrite.queueFor(from, to, ahead.rewritten, redo) else emptyList()
+                    val skipped = if (from != null && to != null) (kotlin.math.abs(to - from) + 1) - queue.size else 0
+                    Fold(
+                        title = "Rewrite ahead",
+                        value = if (running) "${batch.done}/${batch.total}" else "",
+                        open = "ahead" in open,
+                        onToggle = { toggle("ahead") },
+                    ) {
+                        if (running) {
+                            Note("Rewriting in the background: ${batch.done} of ${batch.total} chapters.")
+                            Micro(text = listOf(batch.currentLabel, batch.stage.lowercase()).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "Starting" })
+                            OutlineAction(label = "Stop", enabled = true, modifier = Modifier.padding(top = 16.dp)) { onStopAhead() }
+                            Note("It keeps going with the screen off or the app closed. Chapters already finished stay.")
+                        } else {
+                            Note("Rewrites a run of chapters one after another, so they are ready before you read them. Each uses the one before it, so they go in order.")
+                            LineField(
+                                label = "From chapter (1–$chapterCount)",
+                                value = fromText,
+                                onChange = { fromText = it.filter(Char::isDigit).take(6) },
+                                keyboardType = KeyboardType.Number,
+                            )
+                            if (from != null) Micro(text = ahead.chapterLabels[from])
+                            LineField(
+                                label = "To chapter (1–$chapterCount)",
+                                value = toText,
+                                onChange = { toText = it.filter(Char::isDigit).take(6) },
+                                keyboardType = KeyboardType.Number,
+                            )
+                            if (to != null) Micro(text = ahead.chapterLabels[to])
+                            Spacer(Modifier.height(10.dp))
+                            Segmented(
+                                options = listOf("skip" to "Skip rewritten", "redo" to "Redo all"),
+                                selected = if (redo) "redo" else "skip",
+                                onSelect = { redo = it == "redo" },
+                            )
+                            if (from != null && to != null) {
+                                Note(
+                                    when {
+                                        queue.isEmpty() -> "Every chapter in this range already has a rewrite."
+                                        else -> "${queue.size} ${if (queue.size == 1) "chapter" else "chapters"}" +
+                                            (if (skipped > 0) ", $skipped already rewritten and skipped" else "") +
+                                            ". About ${queue.size * BatchRewrite.REQUESTS_PER_CHAPTER} requests to the service; they count against its limits."
+                                    },
+                                )
+                            } else {
+                                Note("Enter chapter numbers between 1 and $chapterCount.")
+                            }
+                            if (ahead.busy) Note("This chapter is being rewritten on its own. Wait for it to finish.")
+                            OutlineAction(
+                                label = if (queue.size == 1) "Rewrite 1 chapter ahead" else "Rewrite ${queue.size} chapters ahead",
+                                enabled = settings.ready && queue.isNotEmpty() && !ahead.busy && !batch.running,
+                                modifier = Modifier.padding(top = 12.dp),
+                            ) {
+                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                                    androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+                                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    pendingQueue = queue
+                                    notifications.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    onStartAhead(queue)
+                                }
+                            }
+                            if (!settings.ready) Note("Set up the service and choose a model first.")
+                            if (mine && batch.result != null) Note(batch.result!!)
+                        }
                     }
                 }
                 Spacer(Modifier.height(40.dp))

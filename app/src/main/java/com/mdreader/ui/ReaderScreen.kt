@@ -57,7 +57,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mdreader.data.BatchRewrite
 import com.mdreader.data.Chapter
+import com.mdreader.data.ChapterRewriter
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
 import com.mdreader.data.RewriteClient
@@ -73,6 +75,7 @@ import com.mdreader.data.remapTo
 import com.mdreader.md.Block
 import com.mdreader.md.MarkdownParser
 import com.mdreader.md.MarkdownWriter
+import com.mdreader.md.withoutOpeningTitle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
@@ -220,69 +223,19 @@ fun ReaderScreen(
         }
         val source = blocks
         if (source.isEmpty() || rewriting) return
+        if (BatchRewrite.state.value.running) {
+            rewriteError = "Chapters are being rewritten ahead. Stop that in the rewrite settings first."
+            return
+        }
         rewriting = true
         rewriteError = null
         rewriteChars = 0
-        val previousNote = chapters.getOrNull(index - 1)?.let { rewrites.read(project, it)?.note }?.let(RewriteClient::carryNote)
         rewriteJob = scope.launch {
             try {
-                val bible = rewrites.bible(project)
-                // Cold start: read the earlier chapters into the sheets before rewriting this one.
-                val builtSoFar = bible.built()
-                // Fetch the earlier chapters the memory needs but the vault doesn't have yet.
-                // How far back the memory reads: the last N chapters, or every chapter from the first.
-                val firstToRead = if (settings.memoryDepth <= 0) 0 else maxOf(0, index - settings.memoryDepth)
-                if (chapter.remote) {
-                    val missing = (firstToRead until index).filter {
-                        chapters[it].uri !in builtSoFar && !vault.has(project, chapters[it])
-                    }
-                    if (missing.isNotEmpty()) {
-                        val result = withContext(Dispatchers.IO) {
-                            downloadChapters(project, missing, vault, null, java.time.LocalDate.now().toString()) {
-                                rewriteStatus = "DOWNLOAD ${it.done}/${it.total}"
-                            }
-                        }
-                        if (result.failed > 0 && result.message?.startsWith("Paused") == true) {
-                            throw java.io.IOException(result.message)
-                        }
-                    }
-                }
-                val todo = (firstToRead until index).mapNotNull { i ->
-                    val c = chapters[i]
-                    if (c.uri in builtSoFar) return@mapNotNull null
-                    val text = withContext(Dispatchers.IO) {
-                        runCatching {
-                            if (c.remote) vault.read(project, c) else ChapterSource.read(context, Uri.parse(c.uri))
-                        }.getOrNull()
-                    }
-                    text?.let { Triple(i, c, it) }
-                }
-                todo.forEachIndexed { n, (i, c, text) ->
-                    rewriteStatus = "SHEETS ${n + 1}/${todo.size}"
-                    val updates = RewriteClient.buildSheets(settings, c.number(i), c.title, text) { rewriteChars = it }
-                    withContext(Dispatchers.IO) { bible.merge(updates); bible.markBuilt(c.uri) }
-                }
-                rewriteStatus = null
-                rewriteChars = 0
-                val md = MarkdownWriter.write(source)
-                val previousTail = chapters.getOrNull(index - 1)?.let { c ->
-                    withContext(Dispatchers.IO) {
-                        runCatching {
-                            if (c.remote) vault.read(project, c) else ChapterSource.read(context, Uri.parse(c.uri))
-                        }.getOrNull()
-                    }?.let { RewriteClient.tailWords(it) }
-                }
-                val result = RewritePipeline.rewrite(
-                    settings, chapter.number(index), chapter.title, md, previousNote,
-                    withContext(Dispatchers.IO) { bible.context(md) },
-                    previousTail,
-                    onStage = { rewriteStatus = it },
-                ) { rewriteChars = it }
-                withContext(Dispatchers.IO) {
-                    rewrites.write(project, chapter, result)
-                    bible.merge(result.sheets)
-                    bible.markBuilt(chapter.uri)
-                }
+                val result = ChapterRewriter.rewrite(
+                    context, project, chapters, index, settings, rewrites, vault, source,
+                    onStatus = { rewriteStatus = it }, onProgress = { rewriteChars = it },
+                )
                 val parsed = MarkdownParser.parse(result.chapter, markdown = true).withoutOpeningTitle(chapter.title)
                 // The reader may have moved on while the answer was coming back.
                 if (chapters.getOrNull(index) == chapter) {
@@ -518,6 +471,15 @@ fun ReaderScreen(
             onChange = { next -> scope.launch(Dispatchers.IO) { rewrites.saveSettings(next) } },
             onRebuildMemory = { rewrites.bible(project).clear() },
             onBack = { showRewriteSettings = false },
+            ahead = AheadSetup(
+                projectId = project.id,
+                chapterLabels = remember(project.id, chapters.size) { chapters.mapIndexed { i, c -> "Chapter ${c.number(i)} · ${c.title}" } },
+                currentIndex = index,
+                rewritten = remember(showRewriteSettings, project.id) { rewrites.rewrittenPositions(project, chapters) },
+                busy = rewriting,
+            ),
+            onStartAhead = { queue -> com.mdreader.data.RewriteBatchService.start(context, project.id, queue) },
+            onStopAhead = { com.mdreader.data.RewriteBatchService.stop(context) },
         )
     }
 
@@ -814,25 +776,6 @@ private fun ReaderMessage(
         }
     }
 }
-
-/** Drops a leading Markdown heading when it only repeats the chapter's filename title. */
-private fun List<Block>.withoutOpeningTitle(title: String): List<Block> {
-    val first = firstOrNull() as? Block.Heading ?: return this
-    if (first.level > 2) return this
-
-    val heading = normalizeHeading(first.text)
-    val expected = normalizeHeading(title)
-    val genericChapter = Regex("^chapter\\s+\\d+$").matches(heading)
-    return if ((expected.isNotEmpty() && heading == expected) || genericChapter) {
-        drop(1)
-    } else {
-        this
-    }
-}
-
-private fun normalizeHeading(value: String): String =
-    value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
-
 
 /**
  * ORIGINAL | REWRITTEN as one square segmented control with the settings gear beside it, then a

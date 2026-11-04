@@ -36,6 +36,12 @@ API). The same events, better told: every beat, name and number
 kept, with texture, staging and sharper dialogue added. The original is never
 touched, and one tap flips between the two.
 
+**Rewrite ahead** (⚙ → Rewrite ahead) rewrites a run of chapters, from one number
+to another, in order, so they are ready before you read them. It runs as a
+background service with a progress notification and a Stop button, skips chapters
+that already have a rewrite (or redoes them), and stops at the first failure,
+keeping what it finished.
+
 A rewrite is one fixed script, no agent loop:
 
 1. **Memory.** Earlier chapters (the last 20, the last 100, or all of them) are

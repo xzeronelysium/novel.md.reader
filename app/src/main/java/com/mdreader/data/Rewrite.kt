@@ -168,6 +168,11 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
         atomicWrite(file, rewrite.chapter)
     }
 
+    /** Positions of the chapters that already have a saved rewrite. */
+    @Synchronized
+    fun rewrittenPositions(project: Project, chapters: List<Chapter>): Set<Int> =
+        chapters.indices.filter { chapterFile(project, chapters[it]).isFile }.toSet()
+
     @Synchronized
     fun delete(project: Project, chapter: Chapter) {
         chapterFile(project, chapter).delete()
