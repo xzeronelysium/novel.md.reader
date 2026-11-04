@@ -127,6 +127,9 @@ fun ReaderScreen(
     var rewriteChars by remember(project.id) { mutableIntStateOf(0) }
     var rewriteStatus by remember(project.id) { mutableStateOf<String?>(null) }
     var rewriteJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var learning by remember(project.id) { mutableStateOf(false) }
+    var learnJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var learnStatus by remember(project.id) { mutableStateOf<String?>(null) }
     var showRewriteSettings by remember { mutableStateOf(false) }
     var pendingRestore by remember(project.id) { mutableStateOf(startProgress) }
     // Each tab keeps its own place in the open chapter: (first visible item, its offset).
@@ -238,6 +241,7 @@ fun ReaderScreen(
             rewriteError = "Chapters are being rewritten ahead. Stop that in the rewrite settings first."
             return
         }
+        learnJob?.cancel()
         rewriting = true
         rewriteError = null
         rewriteChars = 0
@@ -266,6 +270,30 @@ fun ReaderScreen(
                 rewriting = false
                 rewriteStatus = null
                 rewriteJob = null
+            }
+        }
+    }
+
+    // Wiki as you read: an opened chapter is read into the wiki in the background, rewritten or not.
+    // Waits for the chapter to load and stays out of the way of a rewrite or a batch; a failure is
+    // quiet, the chapter is simply tried again the next time it is opened.
+    // The read-ahead runs on its own job, so turning the page does not cut it off.
+    LaunchedEffect(project.id, index, loading, rewriting, blocks.isNotEmpty()) {
+        val settings = rewrites.settings()
+        if (!settings.autoWiki || !settings.ready || loading || rewriting || blocks.isEmpty()) return@LaunchedEffect
+        if (learnJob?.isActive == true || BatchRewrite.state.value.running) return@LaunchedEffect
+        val upTo = ChapterRewriter.wikiTarget(rewrites, project, chapters, index) ?: return@LaunchedEffect
+        learning = true
+        learnJob = scope.launch {
+            try {
+                ChapterRewriter.learn(context, project, chapters, index, upTo, settings, rewrites, vault) { learnStatus = it }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("MDReader", "wiki read failed near ${chapters.getOrNull(index)?.uri}", e)
+            } finally {
+                learning = false
+                learnStatus = null
             }
         }
     }
@@ -376,6 +404,16 @@ fun ReaderScreen(
             onRewriteAgain = { startRewrite() },
             onSettings = { showRewriteSettings = true },
         )
+        if (learning) {
+            // "SHEETS 3/10" while chapters are read, "DOWNLOAD 2/5" before that.
+            Text(
+                text = "WIKI  " + (learnStatus?.substringAfter(' ') ?: "…") +
+                    (learnStatus?.takeIf { it.startsWith("DOWNLOAD") }?.let { "  downloading" } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
+            )
+        }
         ChapterRail(percent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent ?: 0 else 0)
 
         Box(
@@ -475,7 +513,7 @@ fun ReaderScreen(
     }
 
     val wikiChapter = chapters.getOrNull(index)?.number(index) ?: (index + 1)
-    LaunchedEffect(project.id, wikiChapter, rewriting) {
+    LaunchedEffect(project.id, wikiChapter, rewriting, learning) {
         wikiIndex = withContext(Dispatchers.IO) { rewrites.bible(project).index(wikiChapter) }
     }
     if (showWiki) {

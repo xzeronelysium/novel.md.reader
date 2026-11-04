@@ -358,6 +358,15 @@ fun RewriteSettingsScreen(
                         selected = settings.memoryDepth.toString(),
                         onSelect = { update(settings.copy(memoryDepth = it.toInt())) },
                     )
+                    Segmented(
+                        options = listOf("on" to "Wiki as I read", "off" to "Only when rewriting"),
+                        selected = if (settings.autoWiki) "on" else "off",
+                        onSelect = { update(settings.copy(autoWiki = it == "on")) },
+                    )
+                    Note(
+                        "With this on, each chapter you open is read into the wiki in the background, " +
+                            "so the original can stay as it is.",
+                    )
                     Note(
                         "People, places, world rules and the story so far, read from earlier chapters before a rewrite. " +
                             "The first read takes one call per chapter; after that only new chapters.",
