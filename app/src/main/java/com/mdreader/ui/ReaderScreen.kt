@@ -113,6 +113,9 @@ fun ReaderScreen(
     // The saved rewrite of the open chapter, and whether it is the one on screen.
     var rewriteBlocks by remember(project.id) { mutableStateOf<List<Block>?>(null) }
     var showRewrite by remember(project.id) { mutableStateOf(false) }
+    // Which tab the reader chose last. It follows them from chapter to chapter: a chapter with a
+    // rewrite opens in the rewrite while this is on, one without opens as the original and leaves it on.
+    var preferRewrite by rememberSaveable(project.id) { mutableStateOf(startProgress?.rewritten == true) }
     var rewriting by remember(project.id) { mutableStateOf(false) }
     var rewriteError by remember(project.id) { mutableStateOf<String?>(null) }
     var rewriteChars by remember(project.id) { mutableIntStateOf(0) }
@@ -211,6 +214,8 @@ fun ReaderScreen(
                 }.getOrNull()
             }
         }
+        // A place restored from the last visit decides its own tab; every other chapter follows the preference.
+        if (pendingRestore?.chapterIndex != index) showRewrite = preferRewrite && rewriteBlocks != null
         rewriteChecked = true
     }
 
@@ -242,6 +247,7 @@ fun ReaderScreen(
                     if (!showRewrite) originalPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
                     rewriteBlocks = parsed
                     showRewrite = true
+                    preferRewrite = true
                     // A fresh rewrite is read from its start.
                     rewritePos = 0 to 0
                     listState.scrollToItem(0)
@@ -290,6 +296,7 @@ fun ReaderScreen(
 
     /** Switches tab, remembering where this one was left and returning to where the other was. */
     fun switchTab(toRewrite: Boolean) {
+        preferRewrite = toRewrite
         if (showRewrite == toRewrite) return
         val here = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
         if (showRewrite) rewritePos = here else originalPos = here
