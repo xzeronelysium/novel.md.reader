@@ -42,39 +42,153 @@ class BibleStore(private val root: File) {
         file("_built.txt").apply { parentFile?.mkdirs() }.appendText(uri + "\n")
     }
 
-    /** Merges `## people/Name` style sections into the sheets; returns how many bullets were added. */
+    /**
+     * Merges `## people/Name` style sections into the sheets; returns how many bullets were added.
+     * A section naming a thing the wiki already knows under another name (a nickname, a surname, a
+     * title) lands on that thing's sheet, never on a new one; see [canonical].
+     */
     @Synchronized
-    fun merge(updates: String): Int {
-        var target: File? = null
-        var added = 0
-        val pending = LinkedHashMap<File, MutableList<String>>()
+    fun merge(updates: String): Int = mergeClean(tidy(updates))
+
+    /**
+     * Gemma-sized models dress replies up: code fences, bold headings, "1." numbering, "* " bullets,
+     * a "Sure, here are the sheets" opener. Strip that so the strict format still parses.
+     */
+    internal fun tidy(reply: String): String = reply.lines().map { raw ->
+        var l = raw.trim().replace("**", "").replace("__", "")
+        l = l.replace(Regex("^#{1,6}\\s*"), "## ").takeIf { raw.trim().startsWith("#") } ?: l
+        l = l.replace(Regex("^(?:[*•]|\\d+[.)])\\s+"), "- ")
+        l
+    }.filterNot { it.startsWith("```") }.joinToString("\n")
+
+    /** True when [reply] holds at least one parseable heading with a cited bullet; false means ask again. */
+    fun usable(reply: String): Boolean = tidy(reply).lines().let { ls ->
+        ls.any { it.startsWith("## ") && targetOf(it.removePrefix("## ").trim()) != null } &&
+            ls.any { it.startsWith("- ") && citation.containsMatchIn(it) }
+    }
+
+    private fun mergeClean(updates: String): Int {
+        val sections = LinkedHashMap<String, MutableList<String>>()
+        var heading: String? = null
         for (raw in updates.lines()) {
             val line = raw.trim()
             if (line.startsWith("## ")) {
-                target = targetOf(line.removePrefix("## ").trim())
-            } else if (line.startsWith("- ") && target != null &&
-                (citation.containsMatchIn(line) || (target.name == "synopsis.md" && synopsisLine.containsMatchIn(line)))
+                heading = line.removePrefix("## ").trim()
+            } else if (line.startsWith("- ") && heading != null && targetOf(heading) != null &&
+                (citation.containsMatchIn(line) || (heading.equals("synopsis", true) && synopsisLine.containsMatchIn(line)))
             ) {
-                pending.getOrPut(target) { mutableListOf() }.add(line)
+                sections.getOrPut(heading) { mutableListOf() }.add(line)
             }
         }
-        for ((file, bullets) in pending) {
-            file.parentFile?.mkdirs()
-            val seen = (if (file.isFile) file.readLines().filter { it.startsWith("- ") } else emptyList())
-                .map(::tokens).toMutableList()
-            val lines = if (file.isFile) file.readLines().toSet() else emptySet()
-            val fresh = bullets.filter { bullet ->
-                // A state line is a new state even when it reads like the last one.
-                if (bullet.startsWith("- now:", ignoreCase = true)) return@filter bullet !in lines
-                val t = tokens(bullet)
-                (seen.none { sameFact(it, t) }).also { if (it) seen += t }
+        var added = 0
+        for ((head, bullets) in sections) {
+            var target = targetOf(head) ?: continue
+            val kind = KINDS.firstOrNull { head.startsWith("$it/", true) }
+            var lines = bullets.toList()
+            if (kind != null) {
+                lines = lines.mapNotNull { dropForeignAliases(kind, head.substringAfter('/').trim(), it) }
+                val given = head.substringAfter('/').trim()
+                val (file, folded) = canonical(kind, given, bullets)
+                target = file ?: continue
+                // The name the chapter used becomes an alias of the sheet it landed on.
+                if (!given.equals(target.nameWithoutExtension, true) &&
+                    aliases(target.takeIf { it.isFile }?.readLines().orEmpty()).none { it.equals(given, true) }
+                ) {
+                    val cite = CITATION_TAIL.find(bullets.first())?.value ?: "(Ch 0)"
+                    lines = listOf("- also called: $given $cite") + lines
+                }
+                folded.forEach { fold(it, target) }
             }
-            if (fresh.isEmpty()) continue
-            if (!file.isFile) file.writeText("# ${file.nameWithoutExtension}\n\n")
-            file.appendText(fresh.joinToString("\n", postfix = "\n"))
-            added += fresh.size
+            added += append(target, lines)
         }
         return added
+    }
+
+    /**
+     * An "also called" bullet may not list another sheet's title: a model that calls the narrator
+     * "The Hero" while a sheet "The Hero" exists is guessing, and two characters must not fuse on a guess.
+     */
+    private fun dropForeignAliases(kind: String, own: String, bullet: String): String? {
+        if (!bullet.startsWith("- also called:", ignoreCase = true)) return bullet
+        val titles = File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().map { norm(it.nameWithoutExtension) }.toSet()
+        val cite = CITATION_TAIL.find(bullet)?.value.orEmpty()
+        val names = bullet.substringAfter(':').substringBefore("(Ch").split(',', ';').map { it.trim() }
+            .filter { it.isNotEmpty() && (norm(it) !in titles || norm(it) == norm(own)) }
+        return if (names.isEmpty()) null else "- also called: ${names.joinToString(", ")} $cite".trim()
+    }
+
+    /** Appends the bullets of [bullets] that [file] doesn't already say; returns how many were new. */
+    private fun append(file: File, bullets: List<String>): Int {
+        file.parentFile?.mkdirs()
+        val seen = (if (file.isFile) file.readLines().filter { it.startsWith("- ") } else emptyList())
+            .map(::tokens).toMutableList()
+        val existing = if (file.isFile) file.readLines().toSet() else emptySet()
+        val fresh = bullets.filter { bullet ->
+            // A state line is a new state even when it reads like the last one.
+            if (bullet.startsWith("- now:", ignoreCase = true)) return@filter bullet !in existing
+            val t = tokens(bullet)
+            (seen.none { sameFact(it, t) }).also { if (it) seen += t }
+        }
+        if (fresh.isEmpty()) return 0
+        if (!file.isFile) file.writeText("# ${file.nameWithoutExtension}\n\n")
+        file.appendText(fresh.joinToString("\n", postfix = "\n"))
+        return fresh.size
+    }
+
+    /**
+     * The sheet a section about [name] belongs on, and the older sheets that turn out to be the same
+     * thing (to be folded into it). The title and the aliases of every sheet are its names; a
+     * single word that sits in exactly one longer title ("Raze" in "Raze Grimhold") is that sheet,
+     * and a longer name that contains exactly one existing short title replaces it. When two sheets
+     * both fit, none is chosen: two people sharing a first name stay two people.
+     */
+    private fun canonical(kind: String, name: String, bullets: List<String>): Pair<File?, List<File>> {
+        val dir = File(root, kind)
+        val sheets = dir.listFiles { f -> f.extension == "md" }.orEmpty()
+            .associateWith { f -> (listOf(f.nameWithoutExtension) + aliases(f.readLines())).map(::norm) }
+        fun named(n: String) = sheets.filter { (_, names) -> n in names }.keys
+        val own = norm(name)
+        named(own).firstOrNull()?.let { return it to emptyList() }
+        // The chapter itself says this is the same as something we have.
+        for (claim in aliases(bullets).map(::norm).filter { it.length >= 3 }) {
+            val hit = named(claim)
+            if (hit.size == 1) return hit.first() to emptyList()
+        }
+        val words = own.split(' ')
+        if (words.size == 1 && own.length >= 3) {
+            val hit = sheets.filter { (f, names) -> names.any { n -> ' ' in n && own in n.split(' ') } || f.nameWithoutExtension.let { norm(it).split(' ').let { w -> w.size > 1 && own in w } } }.keys
+            if (hit.size == 1) return hit.first() to emptyList()
+        } else if (words.size > 1) {
+            val short = sheets.filter { (_, names) -> names.any { n -> n.length >= 3 && ' ' !in n && n in words } }.keys
+            val target = sheet(kind, name)
+            if (short.size == 1 && target != null) return target to short.toList()
+        }
+        return sheet(kind, name) to emptyList()
+    }
+
+    /** Moves everything [from] knows onto [into] and removes [from], keeping its title as an alias. */
+    private fun fold(from: File, into: File) {
+        if (from == into || !from.isFile) return
+        val bullets = from.readLines().filter { it.startsWith("- ") }
+        val cite = bullets.firstNotNullOfOrNull { CITATION_TAIL.find(it)?.value } ?: "(Ch 0)"
+        append(into, listOf("- also called: ${from.nameWithoutExtension} $cite") + bullets)
+        from.delete()
+    }
+
+    private fun norm(s: String) = s.lowercase().replace('’', '\'').trim()
+
+    /** Every sheet and what it answers to, for the extraction prompt: the model reuses these names. */
+    @Synchronized
+    fun roster(budget: Int = 2_500): String {
+        val out = StringBuilder()
+        for (kind in KINDS) {
+            val line = File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().sortedBy { it.name }.joinToString("; ") { f ->
+                val al = aliases(f.readLines()).take(5)
+                f.nameWithoutExtension + if (al.isEmpty()) "" else " (also ${al.joinToString(", ")})"
+            }
+            if (line.isNotEmpty()) out.append("$kind: $line\n")
+        }
+        return out.toString().take(budget).trim()
     }
 
     /** The sheets that matter for [text]: every person or place it names (or their aliases), plus threads and conflicts. */
@@ -92,6 +206,7 @@ class BibleStore(private val root: File) {
             }
         }.sortedByDescending { it.third }
         val out = StringBuilder()
+        roster().takeIf { it.isNotEmpty() }?.let { out.append("[sheets that exist; reuse these names, add new nicknames as 'also called']\n").append(it).append("\n\n") }
         val synopsis = file("synopsis.md")
         if (synopsis.isFile) {
             val recent = synopsis.readLines().filter { it.startsWith("- ") }.takeLast(10)
@@ -102,6 +217,8 @@ class BibleStore(private val root: File) {
             if (out.length + body.length > budget) continue
             out.append("[$kind] ").append(body.trim()).append("\n\n")
         }
+        // Hard figures come first and in full: a drifted age or span is the costliest slip.
+        file("figures.md").takeIf { it.isFile }?.let { out.append(recentLines(it, 4_000)).append("\n\n") }
         for (name in listOf("threads.md", "conflicts.md")) {
             val f = file(name)
             if (f.isFile && out.length < budget) out.append(recentLines(f, 2_500)).append("\n\n")
@@ -152,12 +269,77 @@ class BibleStore(private val root: File) {
         return a.intersect(b).size.toDouble() / small >= 0.85
     }
 
+    // ---- Reading side: what the reader's wiki shows, never past the chapter being read ----
+
+    /** Every person, place or system with at least one fact cited at or before [upTo]. */
+    @Synchronized
+    fun index(upTo: Int): WikiIndex = WikiIndex(
+        KINDS.flatMap { kind ->
+            File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().mapNotNull { f ->
+                val lines = f.readLines()
+                if (lines.none { it.startsWith("- ") && firstChapter(it)?.let { n -> n <= upTo } == true }) return@mapNotNull null
+                WikiEntry(kind, f.nameWithoutExtension, aliases(lines.filter { firstChapter(it)?.let { n -> n <= upTo } == true }))
+            }
+        }.groupBy { it.name.lowercase() }.values.map { same ->
+            // One name on two shelves (a place that is also a system) is one entry; the page merges both.
+            same.minByOrNull { KINDS.indexOf(it.kind) }!!.copy(aliases = same.flatMap { it.aliases }.distinct())
+        }.sortedBy { it.name.lowercase() }
+    )
+
+    /** One sheet as the reader sees it at chapter [upTo]; null when nothing of it is known yet. */
+    @Synchronized
+    fun page(kind: String, name: String, upTo: Int): WikiPage? {
+        val files = KINDS.mapNotNull { k -> sheet(k, name)?.takeIf { it.isFile } }
+            .sortedBy { if (it.parentFile.name == kind) 0 else 1 }
+        val f = files.firstOrNull() ?: return null
+        val facts = files.flatMap { it.readLines() }.filter { it.startsWith("- ") }.mapNotNull { line ->
+            val chapter = firstChapter(line) ?: return@mapNotNull null
+            if (chapter > upTo) return@mapNotNull null
+            val body = line.removePrefix("- ").substringBeforeLast("(Ch").trim()
+            val (type, text) = when {
+                body.startsWith("now:", true) -> WikiFact.NOW to body.substringAfter(':').trim()
+                body.startsWith("voice:", true) -> WikiFact.VOICE to body.substringAfter(':').trim()
+                body.startsWith("also called:", true) -> WikiFact.ALIAS to body.substringAfter(':').trim()
+                else -> WikiFact.FACT to body
+            }
+            val tag = TAG.find(text)?.groupValues?.get(1)?.lowercase()?.let { TAG_SYNONYMS[it] ?: it }?.takeIf { type == WikiFact.FACT }
+            WikiFact(type, if (tag != null) text.replace(TAG, "").trim() else text, chapter, CITATION_TAIL.find(line)?.value?.contains("infer", true) == true, tag)
+        }
+        if (facts.isEmpty()) return null
+        return WikiPage(kind, f.nameWithoutExtension, facts.sortedBy { it.chapter })
+    }
+
+    /** The story so far, one line per chapter up to [upTo]. */
+    @Synchronized
+    fun storySoFar(upTo: Int): List<String> =
+        file("synopsis.md").takeIf { it.isFile }?.readLines().orEmpty()
+            .filter { it.startsWith("- ") && (firstChapter(it)?.let { n -> n <= upTo } == true) }
+            .map { it.removePrefix("- ").trim() }
+
+    /** The lowest chapter a bullet cites: the point from which a reader knows it. */
+    private fun firstChapter(line: String): Int? =
+        CITATION_TAIL.find(line)?.value?.let { Regex("""\d+""").findAll(it).firstOrNull()?.value?.toIntOrNull() }
+            ?: SYNOPSIS_NUMBER.find(line)?.groupValues?.get(1)?.toIntOrNull()
+
+    private companion object {
+        val KINDS = listOf("people", "places", "systems")
+        /** The citation closing a bullet: `(Ch 12)`, `(Ch 12, inferred)`, `(Ch 3, Ch 5)`. */
+        val CITATION_TAIL = Regex("""\(\s*Ch(?:apters?|\.)?\s*\d+[^)]*\)\s*$""", RegexOption.IGNORE_CASE)
+        val TAG = Regex("""^\[(appearance|looks?|personality|traits?|abilit(?:y|ies)|skills?|relation(?:ship)?s?|background|history|role|rules?)]\s*""", RegexOption.IGNORE_CASE)
+        /** Other words a model writes for a tag, mapped to the tag's own. */
+        val TAG_SYNONYMS = mapOf("look" to "appearance", "looks" to "appearance", "trait" to "personality", "traits" to "personality",
+            "abilities" to "ability", "skill" to "ability", "skills" to "ability", "relationship" to "relation", "relations" to "relation",
+            "relationships" to "relation", "history" to "background", "rule" to "rules")
+        val SYNOPSIS_NUMBER = Regex("""^- Ch\s*(\d+)\s*:""", RegexOption.IGNORE_CASE)
+    }
+
     private fun targetOf(heading: String): File? {
         val h = heading.trim()
         return when {
             h.equals("threads", true) -> file("threads.md")
             h.equals("conflicts", true) -> file("conflicts.md")
             h.equals("synopsis", true) -> file("synopsis.md")
+            h.equals("figures", true) -> file("figures.md")
             h.startsWith("systems/", true) -> sheet("systems", h.substringAfter('/'))
             h.startsWith("people/", true) -> sheet("people", h.substringAfter('/'))
             h.startsWith("places/", true) -> sheet("places", h.substringAfter('/'))
@@ -171,4 +353,59 @@ class BibleStore(private val root: File) {
     }
 
     private fun file(name: String) = File(root, name)
+}
+
+/** A person, place or system the wiki has a sheet for; [aliases] are the other names it answers to. */
+data class WikiEntry(val kind: String, val name: String, val aliases: List<String> = emptyList())
+
+/** One fact on a sheet: [chapter] is where it was learned, [inferred] marks a guess rather than a statement. */
+data class WikiFact(val type: String, val text: String, val chapter: Int, val inferred: Boolean, val tag: String? = null) {
+    companion object {
+        const val NOW = "now"
+        const val VOICE = "voice"
+        const val ALIAS = "alias"
+        const val FACT = "fact"
+    }
+}
+
+data class WikiPage(val kind: String, val name: String, val facts: List<WikiFact>) {
+    /** The newest recorded state. */
+    val now: WikiFact? get() = facts.lastOrNull { it.type == WikiFact.NOW }
+    val voice: List<WikiFact> get() = facts.filter { it.type == WikiFact.VOICE }
+    val aliases: List<String> get() = facts.filter { it.type == WikiFact.ALIAS }
+        .flatMap { it.text.split(',', ';') }.map { it.trim() }.filter { it.isNotEmpty() }
+    val known: List<WikiFact> get() = facts.filter { it.type == WikiFact.FACT && !it.inferred }
+    /** The first chapter that mentions it. */
+    val firstSeen: Int get() = facts.minOf { it.chapter }
+    /** The known facts under one tag, in the order they were learned. */
+    fun known(tag: String?): List<WikiFact> = known.filter { it.tag == tag }
+    val inferred: List<WikiFact> get() = facts.filter { it.type == WikiFact.FACT && it.inferred }
+    /** Earlier states, oldest first, for "how they changed". */
+    val history: List<WikiFact> get() = facts.filter { it.type == WikiFact.NOW }.dropLast(1)
+}
+
+/** Finds the wiki's names in a piece of prose. Whole words only, longest name first. */
+class WikiIndex(val entries: List<WikiEntry>) {
+    private val byName: Map<String, WikiEntry> = buildMap<String, WikiEntry> {
+        // Titles beat aliases when two sheets claim the same word.
+        this@WikiIndex.entries.forEach { e -> e.aliases.forEach { putIfAbsent(norm(it), e) } }
+        this@WikiIndex.entries.forEach { e -> put(norm(e.name), e) }
+    }.filterKeys { it.length >= 3 }
+
+    private val pattern: Regex? = byName.keys.sortedByDescending { it.length }.takeIf { it.isNotEmpty() }
+        ?.let { names -> Regex("(?<!\\p{L})(?:" + names.joinToString("|") { Regex.escape(it) } + ")(?!\\p{L})", RegexOption.IGNORE_CASE) }
+
+    fun isEmpty() = entries.isEmpty()
+
+    /** `[start, end)` ranges of [text] that name a sheet. */
+    fun find(text: String): List<Triple<Int, Int, WikiEntry>> {
+        val re = pattern ?: return emptyList()
+        return re.findAll(text.replace('’', '\'')).mapNotNull { m ->
+            byName[norm(m.value)]?.let { Triple(m.range.first, m.range.last + 1, it) }
+        }.toList()
+    }
+
+    fun lookup(name: String): WikiEntry? = byName[norm(name)]
+
+    private fun norm(s: String) = s.lowercase().replace('’', '\'').trim()
 }

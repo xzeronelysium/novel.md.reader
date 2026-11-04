@@ -189,7 +189,7 @@ object RewriteClient {
     // The default Android agent is refused (403) by the host's firewall.
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     /** Bumped whenever a prompt changes, and stamped into every note, so outputs can be compared. */
-    const val PROMPT_VERSION = "2026-11-04.38"
+    const val PROMPT_VERSION = "2026-11-04.40"
     /**
      * Floor and ceiling words for [sourceWords]. The ceiling is the real limit; the floor only
      * catches a scene that dropped content, so a quiet scene may stay short.
@@ -209,17 +209,30 @@ object RewriteClient {
     internal const val EXACT = 0.2
     internal const val CREATIVE = 0.7
 
-    /** Reads one earlier chapter into sheet updates. */
+    /**
+     * Reads one earlier chapter into sheet updates. A reply that holds no usable sheet (prose, an
+     * apology, headings without citations) is asked for once more, with the fault named.
+     */
     suspend fun buildSheets(
         settings: RewriteSettings,
         number: Int,
         title: String,
         markdown: String,
+        roster: String = "",
         onProgress: (Int) -> Unit = {},
-    ): String = stream(
-        settings, RewritePrompts.SHEETS,
-        "Chapter citation: (Ch $number)\n\n# $title\n\n$markdown", onProgress, EXACT,
-    )
+        usable: (String) -> Boolean = { true },
+    ): String {
+        val user = (if (roster.isBlank()) "" else "EXISTING SHEETS (reuse these names):\n$roster\n\n") +
+            "Chapter citation: (Ch $number)\n\n# $title\n\n$markdown"
+        val first = stream(settings, RewritePrompts.SHEETS, user, onProgress, EXACT)
+        if (usable(first)) return first
+        val again = stream(
+            settings, RewritePrompts.SHEETS,
+            "$user\n\nYOUR LAST REPLY COULD NOT BE USED. Reply again with ONLY \"## \" headings (people/<Title>, places/<Title>, systems/<Title>, figures, threads, conflicts, synopsis) and \"- \" bullets, each ending with (Ch $number). No other text.",
+            onProgress, EXACT,
+        )
+        return if (usable(again)) again else first
+    }
 
     internal suspend fun stream(
         settings: RewriteSettings,
@@ -408,6 +421,10 @@ object Fidelity {
 
         val draftNumbers = numbers(draft)
         val lostNumbers = numbers(storyText(source)).filter { it !in draftNumbers }
+        // A figure the rewrite made up or changed: it is in neither this chapter nor the memory of the earlier ones.
+        val allowed = numbers(source) + numbers(known)
+        val strayFigures = draftNumbers.filter { it !in allowed && it !in lostNumbers }
+        if (strayFigures.isNotEmpty()) out += "These figures are not in the source or the memory; ages, durations, counts and sums must match the source and the earlier chapters exactly: " + strayFigures.take(10).joinToString(", ")
         if (lostNumbers.isNotEmpty()) out += "These numbers from the source are missing; keep them as digits: " + lostNumbers.take(10).joinToString(", ")
         val spelledAges = Regex("""\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)-year-old""", RegexOption.IGNORE_CASE)
             .findAll(draft).map { it.value }.distinct().toList()
@@ -458,8 +475,28 @@ object Fidelity {
                 Regex("""^(?:T/?N|TL|Translator|Author|A/N)\b""", RegexOption.IGNORE_CASE).containsMatchIn(t)
         }.joinToString("\n").replace(Regex("""\\?\[\d+\\?]"""), "")
 
-    private fun numbers(text: String): Set<String> =
-        Regex("""\d[\d,]*\d|\d""").findAll(text).map { it.value.replace(",", "") }.toSet()
+    /** Digits in [text], plus counted things written out ("fifteen years" is 15), so a spelled figure is held to the same standard. */
+    internal fun numbers(text: String): Set<String> =
+        (Regex("""\d[\d,]*\d|\d""").findAll(text).map { it.value.replace(",", "") } + spelledFigures(text)).toSet()
+
+    private val ONES = listOf("two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+    private val TENS = listOf("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+    private val UNITS = "(?:years?|months?|days?|weeks?|hours?|minutes?|seconds?|decades?|centuries|gold|silver|copper|coins?|miles?|meters?|metres?|feet|kilometers?|levels?|ranks?|stars?|times)"
+
+    /** "fifteen years", "twenty-five gold": a spelled number straight before a unit. Bare "two" or "five" in prose is not a figure. */
+    private fun spelledFigures(text: String): List<String> {
+        val word = "(?:(?:" + TENS.joinToString("|") + ")(?:[- ](?:one|" + ONES.take(8).joinToString("|") + "))?|" + ONES.joinToString("|") + "|(?:one|two|three|four|five|six|seven|eight|nine) hundred|hundred)"
+        return Regex("(?<![\\p{L}])($word)[- ]$UNITS(?![\\p{L}])", RegexOption.IGNORE_CASE).findAll(text).mapNotNull { toNumber(it.groupValues[1].lowercase()) }.map { it.toString() }.toList()
+    }
+
+    private fun toNumber(w: String): Int? {
+        if (w == "hundred") return 100
+        if (w.endsWith(" hundred")) return (ONES.indexOf(w.substringBefore(' ')) + 2).takeIf { it >= 2 }?.times(100)
+        val parts = w.split('-', ' ')
+        val tens = TENS.indexOf(parts[0])
+        if (tens >= 0) return (tens + 2) * 10 + (parts.getOrNull(1)?.let { if (it == "one") 1 else ONES.indexOf(it) + 2 } ?: 0)
+        return ONES.indexOf(parts[0]).takeIf { it >= 0 }?.plus(2)
+    }
 
     /** "the older soldier" three times in the draft, where the source does not repeat it itself. Names don't count. */
     internal fun repeatedDescriptions(source: String, draft: String, earlier: String = ""): List<String> {

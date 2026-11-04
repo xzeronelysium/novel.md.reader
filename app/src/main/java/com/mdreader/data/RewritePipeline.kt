@@ -308,7 +308,7 @@ object RewritePipeline {
         if (minWords > 0 && Fidelity.wordCount(draft) < minWords * 0.75) return true
         return problems.any { message ->
             when (problemKind(message)) {
-                "banned", "names", "protected" -> true
+                "banned", "names", "protected", "figures" -> true
                 "beats" -> message.substringAfter(": ").split("; ").size >= 3
                 "numbers" -> Regex("\\d+").findAll(message.substringAfter(": ")).any { (it.value.toLongOrNull() ?: 0L) > 10L }
                 else -> false
@@ -329,6 +329,7 @@ object RewritePipeline {
         message.startsWith("It has") -> "length"
         message.startsWith("These beats") -> "beats"
         message.startsWith("These numbers") -> "numbers"
+        message.startsWith("These figures") -> "figures"
         message.startsWith("These banned") -> "banned"
         message.startsWith("These descriptions") -> "repeats"
         message.startsWith("These names") -> "names"

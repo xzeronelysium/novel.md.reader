@@ -241,7 +241,7 @@ private fun SearchRow(
 }
 
 @Composable
-private fun SheetGrip() {
+internal fun SheetGrip() {
     Box(
         modifier = Modifier
             .fillMaxWidth()

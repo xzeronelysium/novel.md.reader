@@ -46,7 +46,7 @@ object RewritePrompts {
            - end: the image, action or line the scene should land on, taken from the source's last moment in this scene
            Never use the "|" character inside a field.
 
-        3. FLAGS. Lines that do not fit the speaker's recorded voice (with a hypothesis: lying, disguised, under stress, or someone else), and contradictions between the source and the memory. Write "- none" if there are none.
+        3. FLAGS. Lines that do not fit the speaker's recorded voice (with a hypothesis: lying, disguised, under stress, or someone else), and contradictions between the source and the memory, above all a figure (an age, a span of years, a count, a sum, a rank) that differs from what the memory or the previous note says. Write "- none" if there are none.
 
         4. VOICES. One line per character who speaks or thinks in this chapter: how they talk, in your own words (register, confidence, how they address others, habits, the kind of English that fits them: slangy, formal, clipped, chatty). Use the source and the memory. Never quote their lines.
 
@@ -186,31 +186,60 @@ object RewritePrompts {
         ## Open questions
         - ...
         $SHEETS_MARK
-    """.trimIndent() + "\n" + SHEET_FORMAT.trimIndent()
+    """.trimIndent() + "\n\n" + GUIDE.trimIndent()
 
     /** Reads an earlier chapter into memory, for a novel whose memory is still empty or behind. */
     val SHEETS = """
-        You keep the memory of a web novel. You read ONE earlier chapter and extract its facts into the memory sheets. Do not rewrite or summarise beyond what is asked. Use only what the text states; invent nothing.
+        You keep the memory of a web novel. You read ONE chapter and write the facts it establishes into memory sheets. You are an extractor, not a writer: copy what the text says, in short plain words. Invent nothing.
 
-        Reply with sections only:
-    """.trimIndent() + "\n" + SHEET_FORMAT.trimIndent()
+    """.trimIndent() + "\n\n" + GUIDE.trimIndent()
 
-    private const val SHEET_FORMAT = """
-        ## people/<Name>
-        - also called: <titles, nicknames, other spellings the text uses> (Ch N)
-        - now: <realm or level, where they are, their condition, what they carry> (Ch N)
-        - voice: <how they talk, described in your own words: register, confidence, how they address others, verbal habits; never quote their lines> (Ch N)
-        - <appearance, role, trait, relation or what they know> (Ch N)
-        ## places/<Name>
-        - <layout, look, materials, light, sound, smell, landmarks, who is there> (Ch N)
-        ## systems/<Name>
-        - <ranks, rules, costs, currencies or techniques of the world, with the source's numbers> (Ch N)
-        ## threads
-        - <promise, open question, or the cause still pending behind an event> (Ch N)
-        ## conflicts
-        - <contradiction with earlier facts, or a line that does not sound like its speaker> (Ch N)
+    /** How to write the sheets, shared by the cold-start read and the rewrite's record step. */
+    private const val GUIDE = """
+        Work in this order, silently, then output only the sheets:
+        STEP 1. List the people, places and systems the chapter names. Keep only those that recur or matter to the plot. Drop extras such as "a guard", "a customer", "the crowd".
+        STEP 2. For each one, look in EXISTING SHEETS (in the message). If it is there under any name, use that sheet's exact title. A nickname, title, surname, first name alone or other spelling of an existing sheet is NOT a new sheet: put it on the existing sheet as an "- also called:" bullet. Create a new sheet only when no existing sheet can be the same one. Never list one existing sheet's title as an alias of another.
+        STEP 3. For each sheet, write one short bullet per NEW fact. Skip anything the sheet already holds. Each bullet starts with exactly one tag from the TAGS list and ends with the citation.
+        STEP 4. Write every stated number (age, years, days, count, sum, rank, distance, date) under "## figures", with its unit and what it measures.
+        STEP 5. Write one synopsis line, then any open threads and contradictions.
+
+        TAGS (use these exact words in square brackets):
+        [role] who they are to the story: job, rank, title, side
+        [appearance] what they look like, or what a place looks, sounds or smells like
+        [personality] how they behave, think, talk or feel
+        [ability] a skill, power, technique or item they have
+        [relation] how they stand to ANOTHER named person, naming that person
+        [background] their past, origin or history
+        [rules] how a system or place works: costs, limits, conditions, ranks
+        Special bullets for people: "- also called: A, B", "- now: ...", "- voice: ...".
+        "now:" is their present state (where they are, level, condition, what they hold). Write a new "now:" only when it changed in this chapter.
+        "voice:" is how they speak, in your words, never quoted.
+
+        CITATION: end every bullet with the chapter citation given in the message, e.g. (Ch 12). If a fact is your reading between the lines and the text does not say it outright, write (Ch 12, inferred) instead. When unsure whether something is stated, it is inferred.
+
+        FORMAT: output only "## " headings and "- " bullets. Headings are exactly: "## people/<Title>", "## places/<Title>", "## systems/<Title>", "## figures", "## threads", "## conflicts", "## synopsis". No other text, no code fences, no bold, no numbering, no explanation. One fact per bullet, under 25 words. Never repeat a fact in other words.
+
+        EXAMPLE
+        Message contains: EXISTING SHEETS: people: Mara Voss (also Captain Voss) / Chapter citation: (Ch 7) / chapter text: "The captain, Mara, slid the map across the table. 'Three days to the pass,' she said flatly. Her scarred left hand shook a little. Tomas, her new cook, a boy of fourteen, said nothing. The Iron Gate toll was 5 silver per cart. She suspected he was lying about his name."
+        Correct reply:
+        ## people/Mara Voss
+        - also called: the captain (Ch 7)
+        - [appearance] scarred left hand (Ch 7)
+        - [personality] speaks flatly, gives orders briefly (Ch 7)
+        - [relation] employs Tomas as her cook (Ch 7)
+        - voice: flat, curt, practical (Ch 7)
+        ## people/Tomas
+        - [role] cook in Mara Voss's company (Ch 7)
+        - [personality] stays silent around her (Ch 7)
+        - [background] may be using a false name (Ch 7, inferred)
+        ## places/The Iron Gate
+        - [rules] charges a toll per cart (Ch 7)
+        ## figures
+        - Tomas is 14 years old (Ch 7)
+        - the pass is 3 days away (Ch 7)
+        - the Iron Gate toll is 5 silver per cart (Ch 7)
         ## synopsis
-        - Ch N: <one sentence on what happened in this chapter>
-        Rules: every bullet ends with the chapter citation from the message, like (Ch 12). Only recurring or consequential people, places and systems. One short bullet per fact; never repeat a fact in other words. Write a new "now:" line only when the state changed.
+        - Ch 7: Mara Voss plans the three-day route to the pass with her new cook Tomas.
+        Note what the example did: "Mara" and "the captain" went onto the existing sheet "Mara Voss" instead of making new sheets; the guess about the name is marked inferred; every number is under figures with its unit.
     """
 }

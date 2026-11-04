@@ -120,7 +120,7 @@ fun BlockView(block: Block) {
 
         // Thoughts (italic in the prose) take a softer ink, so they read apart from speech.
         is Block.Paragraph -> Text(
-            text = block.spans.toAnnotatedString(italicColor = colors.onSurfaceVariant),
+            text = block.spans.toAnnotatedString(italicColor = colors.onSurfaceVariant).withWikiLinks(),
             style = bodyStyle,
             modifier = Modifier
                 .fillMaxWidth()
@@ -140,7 +140,7 @@ fun BlockView(block: Block) {
                 modifier = Modifier.padding(top = 11.dp),
             )
             Text(
-                text = block.spans.toAnnotatedString(),
+                text = block.spans.toAnnotatedString().withWikiLinks(),
                 style = bodyStyle,
                 modifier = Modifier.weight(1f),
             )
@@ -164,7 +164,7 @@ fun BlockView(block: Block) {
                     .padding(top = 4.dp),
             )
             Text(
-                text = block.spans.toAnnotatedString(),
+                text = block.spans.toAnnotatedString().withWikiLinks(),
                 style = bodyStyle,
                 modifier = Modifier.weight(1f),
             )
@@ -184,7 +184,7 @@ fun BlockView(block: Block) {
                     .background(colors.outline),
             )
             Text(
-                text = block.spans.toAnnotatedString(),
+                text = block.spans.toAnnotatedString().withWikiLinks(),
                 style = bodyStyle.copy(
                     fontStyle = FontStyle.Italic,
                     color = colors.onSurfaceVariant,
@@ -318,7 +318,7 @@ private fun ChatPanel(messages: List<ChatMessage>, single: Boolean) {
                         )
                     }
                     Text(
-                        text = message.spans.toAnnotatedString(),
+                        text = message.spans.toAnnotatedString().withWikiLinks(),
                         style = TextStyle(
                             fontFamily = FontFamily.SansSerif,
                             fontSize = 15.sp,

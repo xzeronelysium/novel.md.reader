@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mdreader.data.Chapter
+import com.mdreader.data.WikiEntry
+import com.mdreader.data.WikiIndex
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
 import com.mdreader.data.RewriteClient
@@ -105,11 +107,18 @@ fun ReaderScreen(
     var loading by remember(project.id) { mutableStateOf(true) }
     var loadError by remember(project.id) { mutableStateOf<String?>(null) }
     var showChapters by remember { mutableStateOf(false) }
+    var showWiki by remember { mutableStateOf(false) }
+    var wikiEntry by remember { mutableStateOf<WikiEntry?>(null) }
+    var wikiIndex by remember { mutableStateOf(WikiIndex(emptyList())) }
+    val wikiLinks = remember(wikiIndex) { WikiLinks(wikiIndex) { wikiEntry = it; showWiki = true } }
     val rewrites = remember { RewriteStore.of(context.applicationContext) }
     val scope = rememberCoroutineScope()
     // The saved rewrite of the open chapter, and whether it is the one on screen.
     var rewriteBlocks by remember(project.id) { mutableStateOf<List<Block>?>(null) }
     var showRewrite by remember(project.id) { mutableStateOf(false) }
+    // Which tab the reader chose last. It follows them from chapter to chapter: a chapter with a
+    // rewrite opens in the rewrite while this is on, one without opens as the original and leaves it on.
+    var preferRewrite by rememberSaveable(project.id) { mutableStateOf(startProgress?.rewritten == true) }
     var rewriting by remember(project.id) { mutableStateOf(false) }
     var rewriteError by remember(project.id) { mutableStateOf<String?>(null) }
     var rewriteChars by remember(project.id) { mutableIntStateOf(0) }
@@ -208,6 +217,8 @@ fun ReaderScreen(
                 }.getOrNull()
             }
         }
+        // A place restored from the last visit decides its own tab; every other chapter follows the preference.
+        if (pendingRestore?.chapterIndex != index) showRewrite = preferRewrite && rewriteBlocks != null
         rewriteChecked = true
     }
 
@@ -259,7 +270,7 @@ fun ReaderScreen(
                 }
                 todo.forEachIndexed { n, (i, c, text) ->
                     rewriteStatus = "SHEETS ${n + 1}/${todo.size}"
-                    val updates = RewriteClient.buildSheets(settings, c.number(i), c.title, text) { rewriteChars = it }
+                    val updates = RewriteClient.buildSheets(settings, c.number(i), c.title, text, withContext(Dispatchers.IO) { bible.roster() }, { rewriteChars = it }, bible::usable)
                     withContext(Dispatchers.IO) { bible.merge(updates); bible.markBuilt(c.uri) }
                 }
                 rewriteStatus = null
@@ -289,6 +300,7 @@ fun ReaderScreen(
                     if (!showRewrite) originalPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
                     rewriteBlocks = parsed
                     showRewrite = true
+                    preferRewrite = true
                     // A fresh rewrite is read from its start.
                     rewritePos = 0 to 0
                     listState.scrollToItem(0)
@@ -337,6 +349,7 @@ fun ReaderScreen(
 
     /** Switches tab, remembering where this one was left and returning to where the other was. */
     fun switchTab(toRewrite: Boolean) {
+        preferRewrite = toRewrite
         if (showRewrite == toRewrite) return
         val here = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
         if (showRewrite) rewritePos = here else originalPos = here
@@ -381,6 +394,8 @@ fun ReaderScreen(
             bookTitle = project.name,
             onBack = { saveAndLeave() },
             onIndex = { showChapters = true },
+            onWiki = { wikiEntry = null; showWiki = true },
+            wikiEnabled = !wikiIndex.isEmpty(),
             indexEnabled = chapters.isNotEmpty(),
         )
         RewriteTabs(
@@ -487,7 +502,7 @@ fun ReaderScreen(
                                 )
                             }
                             items(if (showRewrite) rewriteBlocks ?: blocks else blocks) { block ->
-                                BlockView(block)
+                                CompositionLocalProvider(LocalWiki provides wikiLinks) { BlockView(block) }
                             }
                         }
                     }
@@ -504,6 +519,20 @@ fun ReaderScreen(
                 onNext = { goTo(index + 1) },
             )
         }
+    }
+
+    val wikiChapter = chapters.getOrNull(index)?.number(index) ?: (index + 1)
+    LaunchedEffect(project.id, wikiChapter, rewriting) {
+        wikiIndex = withContext(Dispatchers.IO) { rewrites.bible(project).index(wikiChapter) }
+    }
+    if (showWiki) {
+        WikiSheet(
+            bible = remember(project.id) { rewrites.bible(project) },
+            index = wikiIndex,
+            upTo = wikiChapter,
+            start = wikiEntry,
+            onDismiss = { showWiki = false },
+        )
     }
 
     if (showRewriteSettings) {
@@ -546,6 +575,8 @@ private fun ReaderTopBar(
     onBack: () -> Unit,
     onIndex: () -> Unit,
     indexEnabled: Boolean,
+    onWiki: () -> Unit,
+    wikiEnabled: Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -574,6 +605,27 @@ private fun ReaderTopBar(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        Box(
+            modifier = Modifier
+                .height(48.dp)
+                .clickable(enabled = wikiEnabled, onClick = onWiki)
+                .padding(horizontal = 12.dp)
+                .semantics {
+                    contentDescription = "Open the novel's wiki"
+                    role = Role.Button
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "WIKI",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (wikiEnabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                },
+            )
+        }
         Box(
             modifier = Modifier
                 .height(48.dp)
