@@ -36,6 +36,8 @@ data class RewriteSettings(
     val effort: String = "",
     /** How many earlier chapters the memory reads before a rewrite; 0 reads from chapter 1. */
     val memoryDepth: Int = 20,
+    /** Read each chapter you open into the wiki, rewritten or not. */
+    val autoWiki: Boolean = true,
     /** The Grok sign-in, when there is one. */
     val xai: XaiCredential? = null,
 ) {
@@ -119,6 +121,7 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
             model = json.optString("model"),
             effort = json.optString("effort"),
             memoryDepth = json.optInt("memoryDepth", 20).coerceAtLeast(0),
+            autoWiki = json.optBoolean("autoWiki", true),
             xai = json.optString("xaiEnc").takeIf { it.isNotEmpty() }?.let(box::open)?.let(XaiCredential::fromJson),
         ).also { loaded ->
             // Fields of earlier versions (the ChatGPT sign-in, strength) are dropped by one rewrite of the file.
@@ -143,6 +146,7 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
             .put("model", settings.model.trim())
             .put("effort", settings.effort.trim())
             .put("memoryDepth", settings.memoryDepth)
+            .put("autoWiki", settings.autoWiki)
         val temp = File(filesDir, "${settingsFile.name}.tmp")
         temp.writeText(json.toString())
         if (!temp.renameTo(settingsFile)) {

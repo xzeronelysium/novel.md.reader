@@ -59,6 +59,11 @@ object RewritePipeline {
     fun paragraphs(markdown: String): List<String> =
         markdown.split(Regex("\\n\\s*\\n")).map { it.trim() }.filter { it.isNotEmpty() }
 
+    /** Says what the chapters ahead are for: choosing words, never spoiling. */
+    internal const val UPCOMING_HEADER = "THE NEXT CHAPTERS (opening only; read them to pick names, terms, relationships and tone that still hold " +
+        "when the story gets there, and to translate ambiguous words the way those chapters show they are meant. " +
+        "They have not happened yet: never narrate, hint at or foreshadow anything from them in this chapter):"
+
     suspend fun rewrite(
         settings: RewriteSettings,
         number: Int,
@@ -67,12 +72,14 @@ object RewritePipeline {
         previousNote: String? = null,
         sheets: String = "",
         previousTail: String? = null,
+        upcoming: String? = null,
         onStage: (String?) -> Unit = {},
         onProgress: (Int) -> Unit = {},
     ): Rewrite {
         val paras = paragraphs(markdown)
         val memory = buildString {
             if (sheets.isNotBlank()) append("MEMORY (canon from earlier chapters):\n").append(sheets.trim()).append("\n\n")
+            if (!upcoming.isNullOrBlank()) append(UPCOMING_HEADER).append("\n").append(upcoming.trim()).append("\n\n")
             if (!previousNote.isNullOrBlank()) append("NOTE OF THE PREVIOUS CHAPTER:\n").append(previousNote.trim()).append("\n\n")
         }
 
