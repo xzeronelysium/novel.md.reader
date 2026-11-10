@@ -290,7 +290,7 @@ class BibleStore(private val root: File) {
     @Synchronized
     fun page(kind: String, name: String, upTo: Int): WikiPage? {
         val files = KINDS.mapNotNull { k -> sheet(k, name)?.takeIf { it.isFile } }
-            .sortedBy { if (it.parentFile.name == kind) 0 else 1 }
+            .sortedBy { if (it.parentFile?.name == kind) 0 else 1 }
         val f = files.firstOrNull() ?: return null
         val facts = files.flatMap { it.readLines() }.filter { it.startsWith("- ") }.mapNotNull { line ->
             val chapter = firstChapter(line) ?: return@mapNotNull null

@@ -90,13 +90,11 @@ class RewriteBatchService : Service() {
     }
 
     private fun channel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            manager().createNotificationChannel(
-                NotificationChannel(CHANNEL, "Rewriting ahead", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Progress of chapters being rewritten in advance"
-                },
-            )
-        }
+        manager().createNotificationChannel(
+            NotificationChannel(CHANNEL, "Rewriting ahead", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Progress of chapters being rewritten in advance"
+            },
+        )
     }
 
     private fun openApp(): PendingIntent = PendingIntent.getActivity(

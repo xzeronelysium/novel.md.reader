@@ -3,8 +3,6 @@ package com.mdreader.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -784,26 +782,6 @@ private fun ValueRow(value: String, action: String, enabled: Boolean, muted: Boo
             color = if (enabled) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
             modifier = Modifier.padding(start = 14.dp),
         )
-    }
-}
-
-/** Flat text choices, the same idiom as the reader's S / M / L. The active one is vermilion. */
-@Composable
-private fun Choices(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-        options.forEach { (value, label) ->
-            val on = value == selected
-            Text(
-                text = label.uppercase(),
-                style = MaterialTheme.typography.labelLarge,
-                color = if (on) scheme.primary else scheme.onSurfaceVariant,
-                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
-                modifier = Modifier
-                    .clickable { onSelect(value) }
-                    .padding(end = 24.dp, top = 14.dp, bottom = 10.dp),
-            )
-        }
     }
 }
 

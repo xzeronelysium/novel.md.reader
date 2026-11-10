@@ -51,7 +51,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
@@ -64,11 +63,8 @@ import com.mdreader.data.WikiEntry
 import com.mdreader.data.WikiIndex
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
-import com.mdreader.data.RewriteClient
-import com.mdreader.data.RewritePipeline
 import com.mdreader.data.RewriteStore
 import com.mdreader.data.Project
-import com.mdreader.data.downloadChapters
 import com.mdreader.data.number
 import com.mdreader.data.Vault
 import com.mdreader.data.online.FreeWebNovelClient
@@ -76,7 +72,6 @@ import com.mdreader.data.online.OnlineException
 import com.mdreader.data.remapTo
 import com.mdreader.md.Block
 import com.mdreader.md.MarkdownParser
-import com.mdreader.md.MarkdownWriter
 import com.mdreader.md.withoutOpeningTitle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview

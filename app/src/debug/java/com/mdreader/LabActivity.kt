@@ -1,5 +1,6 @@
 package com.mdreader
 
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
@@ -59,8 +60,10 @@ class LabActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        setShowWhenLocked(true)
-        setTurnScreenOn(true)
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
 
         val run = intent.getStringExtra("run")?.filter { it.isLetterOrDigit() || it in "-_." }?.ifEmpty { null }
             ?: "run-${System.currentTimeMillis() / 1000}"
