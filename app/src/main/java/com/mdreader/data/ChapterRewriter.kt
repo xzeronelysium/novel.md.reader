@@ -74,7 +74,7 @@ object ChapterRewriter {
             onProgress = onProgress,
         )
         withContext(Dispatchers.IO) {
-            rewrites.write(project, chapter, result)
+            rewrites.write(project, chapter, result.copy(sourceHash = RewriteStore.sourceHash(md)))
             bible.merge(result.sheets)
             bible.markBuilt(chapter.uri)
         }

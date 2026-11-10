@@ -776,6 +776,25 @@ private fun LibraryActions(
                         modifier = Modifier.weight(1f),
                     )
                 }
+                if (downloaded.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(30.dp)
+                            .clickable {
+                                close()
+                                onDownload(DownloadRequest.Refresh)
+                            }
+                            .semantics {
+                                contentDescription = "Download the saved chapters again"
+                                role = Role.Button
+                            },
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Micro(text = "REFRESH ${downloaded.size} SAVED", color = scheme.primary)
+                    }
+                }
                 // The way back to Download + In library, as wide as the two columns together.
                 Row(
                     modifier = Modifier

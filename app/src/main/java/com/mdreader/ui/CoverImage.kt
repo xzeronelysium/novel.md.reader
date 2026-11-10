@@ -37,14 +37,53 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 
-/** Decoded covers in memory, backed by files in the app cache so they survive restarts. */
-private object CoverCache {
-    private val memory = object : LruCache<String, ImageBitmap>(12) {}
+/**
+ * Decoded covers in memory, backed by files in the app cache so they survive restarts.
+ * The memory cache is sized in bytes (an eighth of the heap) rather than in entries, and the
+ * disk folder is pruned to a fixed budget, so a shelf of covers cannot grow without bound.
+ */
+internal object CoverCache {
+    private const val MAX_WIDTH = 720
+    private const val DISK_MAX_BYTES = 20L * 1024 * 1024
+
+    private val maxBytes = (Runtime.getRuntime().maxMemory() / 8).coerceIn(8L * 1024 * 1024, 48L * 1024 * 1024)
+    private val memory = object : LruCache<String, ImageBitmap>(maxBytes.toInt()) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int = value.asAndroidBitmap().byteCount
+    }
+
+    /** Blurred fields are expensive to build and identical for a given cover. */
+    private val fields = java.util.WeakHashMap<ImageBitmap, ImageBitmap>()
+
+    fun field(cover: ImageBitmap): ImageBitmap = synchronized(fields) {
+        fields.getOrPut(cover) { cover.blurredField() }
+    }
 
     private fun file(context: Context, url: String): File {
         val name = MessageDigest.getInstance("SHA-1").digest(url.toByteArray())
             .joinToString("") { "%02x".format(it) }
         return File(File(context.cacheDir, "covers").apply { mkdirs() }, name)
+    }
+
+    /** Decodes at most [MAX_WIDTH] wide: a 40 dp thumbnail does not need a full-size bitmap. */
+    private fun decode(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= MAX_WIDTH) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
+    /** Keeps the cover folder under its budget, oldest files first. */
+    private fun prune(dir: File) {
+        val files = dir.listFiles() ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= DISK_MAX_BYTES) return
+        for (old in files.sortedBy { it.lastModified() }) {
+            if (total <= DISK_MAX_BYTES * 3 / 4) break
+            total -= old.length()
+            old.delete()
+        }
     }
 
     suspend fun load(context: Context, url: String): ImageBitmap? {
@@ -54,11 +93,22 @@ private object CoverCache {
             val bytes = if (cached.isFile) {
                 cached.readBytes()
             } else {
-                FreeWebNovelClient.loadCover(url)?.also { runCatching { cached.writeBytes(it) } }
+                FreeWebNovelClient.loadCover(url)?.also { bytes ->
+                    runCatching {
+                        cached.writeBytes(bytes)
+                        prune(cached.parentFile!!)
+                    }
+                }
             }
-            bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }?.asImageBitmap()
-                ?.also { memory.put(url, it) }
+            bytes?.let(::decode)?.asImageBitmap()?.also { memory.put(url, it) }
         }
+    }
+
+    /** Drops a removed novel's cover from memory and disk. */
+    suspend fun evict(context: Context, url: String?) {
+        if (url.isNullOrEmpty()) return
+        memory.remove(url)
+        withContext(Dispatchers.IO) { runCatching { file(context, url).delete() } }
     }
 }
 
@@ -166,7 +216,7 @@ enum class FieldFade { Home, Detail, Page }
 @Composable
 fun Modifier.coverField(cover: ImageBitmap?, fade: FieldFade, alpha: Float = 0.75f): Modifier {
     if (cover == null) return this
-    val field = remember(cover) { cover.blurredField() }
+    val field = remember(cover) { CoverCache.field(cover) }
     val stops = when (fade) {
         // Fades in above the card, holds behind it, fades out into the shelf bar.
         FieldFade.Home -> arrayOf(

@@ -10,6 +10,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -78,15 +79,14 @@ fun MDReaderApp() {
     var previewStart by remember { mutableStateOf<Progress?>(null) }
 
     LaunchedEffect(Unit) {
-        // Read the settings once, off the main thread, so opening a chapter never touches the
-        // Keystore again.
-        projects = withContext(Dispatchers.IO) {
-            rewrites.settings()
-            store.load()
-        }
+        projects = withContext(Dispatchers.IO) { store.load() }
         textSizeLevel = store.textSizeLevel()
         loading = false
     }
+
+    // Open the sealed settings once, in the background: the first frame must not wait for the
+    // Keystore, and by the time a chapter is read the cache is warm.
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { rewrites.settings() } }
 
     // Only problems are announced; successes (added, removed, updated, imported) stay silent.
     fun notify(message: String) {
@@ -157,6 +157,7 @@ fun MDReaderApp() {
             return
         }
         val plan = planDownload(project.chapters, vault.downloaded(project), detail.resumeIndex, request)
+        val refresh = request == DownloadRequest.Refresh
         downloadFor = project.id
         if (plan.isEmpty()) {
             download = DownloadProgress(message = "Everything asked for is already saved")
@@ -167,7 +168,7 @@ fun MDReaderApp() {
         downloadJob = scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    downloadChapters(project, plan, vault, author, LocalDate.now().toString()) { progress ->
+                    downloadChapters(project, plan, vault, author, LocalDate.now().toString(), refresh = refresh) { progress ->
                         download = progress
                         vaultTick++
                     }
@@ -211,6 +212,7 @@ fun MDReaderApp() {
             store.remove(project.id)
             vault.deleteAll(project)
             rewrites.deleteAll(project)
+            CoverCache.evict(context.applicationContext, project.coverUrl)
         }
         vaultTick++
     }
@@ -290,7 +292,7 @@ fun MDReaderApp() {
         scope.launch {
             var result: String
             try {
-                val novel = FreeWebNovelClient.loadDetails(path)
+                val novel = FreeWebNovelClient.loadDetails(path, fresh = true)
                 val chapters = novel.chapters.toChapters()
                 // Looking at the novel right now, so what this check finds is not "new" to the reader.
                 val updated = current.withChapters(novel.details.title, chapters, novel.details.cover).copy(newChapters = 0)
@@ -320,6 +322,13 @@ fun MDReaderApp() {
             detail = detail.copy(refreshing = false, refreshResult = result)
             delay(2500)
             if (detail.refreshResult == result) detail = detail.copy(refreshResult = null)
+        }
+    }
+
+    // The vault index is read on IO, not during composition, and follows every save.
+    val downloaded by produceState(emptySet(), detail.project?.id, vaultTick) {
+        value = withContext(Dispatchers.IO) {
+            detail.project?.let { vault.downloaded(it) } ?: emptySet()
         }
     }
 
@@ -370,10 +379,7 @@ fun MDReaderApp() {
                 preview = project
             },
             onRefresh = { detailPath?.let(::refreshDetail) },
-            downloaded = detail.project?.let { project ->
-                vaultTick // read so the marks follow every save
-                vault.downloaded(project)
-            }.orEmpty(),
+            downloaded = downloaded,
             download = if (downloadFor == detail.project?.id) download else DownloadProgress(),
             onDownload = ::startDownload,
             onCancelDownload = ::cancelDownload,

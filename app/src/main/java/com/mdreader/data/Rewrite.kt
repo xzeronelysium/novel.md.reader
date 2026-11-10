@@ -93,7 +93,13 @@ object KeystoreSecretBox : SecretBox {
 }
 
 /** A finished rewrite: the chapter in Markdown, and the continuity note that goes with it. */
-data class Rewrite(val chapter: String, val note: String, val sheets: String = "")
+data class Rewrite(
+    val chapter: String,
+    val note: String,
+    val sheets: String = "",
+    /** SHA-1 of the source text it was made from, when known; a changed source makes it stale. */
+    val sourceHash: String? = null,
+)
 
 /**
  * Rewrites live in app-private storage, beside (never over) the downloaded originals:
@@ -179,7 +185,8 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
         val file = chapterFile(project, chapter)
         if (!file.isFile) return null
         val note = noteFile(project, chapter).takeIf { it.isFile }?.readText().orEmpty()
-        return Rewrite(file.readText(), note)
+        val hash = sourceFile(project, chapter).takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
+        return Rewrite(file.readText(), note, sourceHash = hash)
     }
 
     @Synchronized
@@ -189,6 +196,8 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
         // Note first: a chapter file without its note is still valid, the reverse never is.
         atomicWrite(noteFile(project, chapter), rewrite.note)
         atomicWrite(file, rewrite.chapter)
+        rewrite.sourceHash?.let { atomicWrite(sourceFile(project, chapter), it) }
+            ?: sourceFile(project, chapter).delete()
     }
 
     /** Positions of the chapters that already have a saved rewrite. */
@@ -200,6 +209,7 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     fun delete(project: Project, chapter: Chapter) {
         chapterFile(project, chapter).delete()
         noteFile(project, chapter).delete()
+        sourceFile(project, chapter).delete()
     }
 
     /** Removes every rewrite of [project], e.g. when the novel leaves the shelf. */
@@ -211,6 +221,8 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     private fun chapterFile(project: Project, chapter: Chapter) = File(dir(project), key(chapter) + ".md")
 
     private fun noteFile(project: Project, chapter: Chapter) = File(dir(project), key(chapter) + ".note.md")
+
+    private fun sourceFile(project: Project, chapter: Chapter) = File(dir(project), key(chapter) + ".src")
 
     fun bible(project: Project) = BibleStore(File(dir(project), "bible"))
 
@@ -230,6 +242,11 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     }
 
     companion object {
+        /** Identifies the text a rewrite was made from, so a changed chapter can be spotted. */
+        internal fun sourceHash(markdown: String): String =
+            MessageDigest.getInstance("SHA-1").digest(markdown.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+
         @Volatile
         private var shared: RewriteStore? = null
 

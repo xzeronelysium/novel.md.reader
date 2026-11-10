@@ -27,11 +27,44 @@ object FreeWebNovelClient {
     private const val LIST_PACE_MS = 300L
     private val RATE_LIMIT_BACKOFF_MS = listOf(2_000L, 5_000L, 12_000L)
 
-    suspend fun search(query: String, page: Int = 1): List<NovelHit> {
+    // Reopening a novel, or retyping the same search, should not cost a request.
+    private const val PAGE_TTL_MS = 5 * 60_000L
+    private const val SEARCH_TTL_MS = 2 * 60_000L
+    private const val PAGE_CACHE_MAX = 24
+    private const val SEARCH_CACHE_MAX = 32
+
+    private class Memo<T>(val at: Long, val value: T)
+
+    private val pages = LinkedHashMap<String, Memo<NovelDetails>>()
+    private val searches = LinkedHashMap<String, Memo<List<NovelHit>>>()
+
+    private fun <T> memo(cache: LinkedHashMap<String, Memo<T>>, key: String, ttl: Long): T? =
+        synchronized(cache) {
+            val hit = cache.remove(key) ?: return null
+            if (System.currentTimeMillis() - hit.at > ttl) return null
+            cache[key] = hit // freshen the LRU order
+            hit.value
+        }
+
+    private fun <T> remember(cache: LinkedHashMap<String, Memo<T>>, key: String, value: T, max: Int) =
+        synchronized(cache) {
+            cache.remove(key)
+            cache[key] = Memo(System.currentTimeMillis(), value)
+            while (cache.size > max) {
+                val oldest = cache.keys.firstOrNull() ?: break
+                cache.remove(oldest)
+            }
+        }
+
+    suspend fun search(query: String, page: Int = 1, fresh: Boolean = false): List<NovelHit> {
         val term = query.trim()
         if (term.isEmpty()) return emptyList()
+        val key = "$page\u0000$term"
+        if (!fresh) memo(searches, key, SEARCH_TTL_MS)?.let { return it }
         val encoded = URLEncoder.encode(term, "UTF-8")
-        return FreeWebNovelParser.parseSearch(get("/search?keyword=$encoded&page=$page"))
+        val hits = FreeWebNovelParser.parseSearch(get("/search?keyword=$encoded&page=$page"))
+        remember(searches, key, hits, SEARCH_CACHE_MAX)
+        return hits
     }
 
     suspend fun loadAuthor(path: String, page: Int = 1): AuthorListing {
@@ -40,10 +73,13 @@ object FreeWebNovelClient {
         return FreeWebNovelParser.parseAuthorPage(get("$path?page=$page"), path, page)
     }
 
-    /** Just the novel page (summary, author, status): one request. */
-    suspend fun loadNovelPage(path: String): NovelDetails {
+    /** Just the novel page (summary, author, status). Memoised for a few minutes. */
+    suspend fun loadNovelPage(path: String, fresh: Boolean = false): NovelDetails {
         require(FreeWebNovelParser.isNovelPath(path)) { "Not a novel path: $path" }
-        return FreeWebNovelParser.parseNovelDetails(get(path))
+        if (!fresh) memo(pages, path, PAGE_TTL_MS)?.let { return it }
+        val details = FreeWebNovelParser.parseNovelDetails(get(path))
+        remember(pages, path, details, PAGE_CACHE_MAX)
+        return details
     }
 
     /** Novel details plus its complete chapter list (about one request per 200 chapters). */
@@ -53,9 +89,11 @@ object FreeWebNovelClient {
         onDetails: (NovelDetails) -> Unit = {},
         /** Called after each list page with that page and its 1-based number. */
         onPage: (ChapterPage, Int) -> Unit = { _, _ -> },
+        /** Bypasses the memoised summary, for a deliberate refresh. */
+        fresh: Boolean = false,
     ): OnlineNovel {
         require(FreeWebNovelParser.isNovelPath(path)) { "Not a novel path: $path" }
-        val details = FreeWebNovelParser.parseNovelDetails(get(path))
+        val details = loadNovelPage(path, fresh)
         onDetails(details)
         val first = loadChapterPage(path, 1)
         onPage(first, 1)

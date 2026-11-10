@@ -26,7 +26,7 @@ suspend fun checkOnlineProject(project: Project, store: LibraryStore): Result<Pr
 /** Re-reads the whole chapter list, keeping reading progress attached to the same chapter. */
 suspend fun refreshOnlineProject(project: Project, store: LibraryStore): Result<Project> = runCatching {
     val path = requireNotNull(project.onlinePath) { "Not an online novel." }
-    val novel = FreeWebNovelClient.loadDetails(path)
+    val novel = FreeWebNovelClient.loadDetails(path, fresh = true)
     val chapters = novel.chapters.toChapters()
     val updated = project.withChapters(novel.details.title, chapters, novel.details.cover)
     store.addOrReplace(updated)

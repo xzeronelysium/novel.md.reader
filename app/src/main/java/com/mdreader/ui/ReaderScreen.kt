@@ -1,6 +1,7 @@
 package com.mdreader.ui
 
 import android.net.Uri
+import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -72,12 +73,17 @@ import com.mdreader.data.online.OnlineException
 import com.mdreader.data.remapTo
 import com.mdreader.md.Block
 import com.mdreader.md.MarkdownParser
+import com.mdreader.md.MarkdownWriter
 import com.mdreader.md.withoutOpeningTitle
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 @OptIn(FlowPreview::class)
 @Composable
@@ -113,6 +119,9 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     // The saved rewrite of the open chapter, and whether it is the one on screen.
     var rewriteBlocks by remember(project.id) { mutableStateOf<List<Block>?>(null) }
+    // Fingerprint of the text the saved rewrite was made from, and whether the chapter has moved on.
+    var rewriteSourceHash by remember(project.id) { mutableStateOf<String?>(null) }
+    var rewriteStale by remember(project.id) { mutableStateOf(false) }
     var showRewrite by remember(project.id) { mutableStateOf(false) }
     // Which tab the reader chose last. It follows them from chapter to chapter: a chapter with a
     // rewrite opens in the rewrite while this is on, one without opens as the original and leaves it on.
@@ -126,6 +135,8 @@ fun ReaderScreen(
     var learnJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var learnStatus by remember(project.id) { mutableStateOf<String?>(null) }
     var showRewriteSettings by remember { mutableStateOf(false) }
+    // Filled on IO when the settings sheet opens, never during composition.
+    var settingsSnapshot by remember(project.id) { mutableStateOf(SettingsSnapshot()) }
     var pendingRestore by remember(project.id) { mutableStateOf(startProgress) }
     // Each tab keeps its own place in the open chapter: (first visible item, its offset).
     var originalPos by remember(project.id) { mutableStateOf(0 to 0) }
@@ -154,6 +165,50 @@ fun ReaderScreen(
         }
     }
 
+    // Parsed chapters kept warm: returning to one, or turning to a prefetched one, is instant.
+    val chapterCache = remember(project.id) { LruCache<String, List<Block>>(6) }
+    // One read per chapter even when a prefetch and the reader ask for it at the same moment.
+    val inFlight = remember(project.id) { ConcurrentHashMap<String, Deferred<Result<List<Block>>>>() }
+
+    /** Reads and parses one chapter: the vault or the site for online, the SAF folder for local. */
+    suspend fun readChapter(chapter: Chapter): Result<List<Block>> = try {
+        if (chapter.remote) {
+            val saved = withContext(Dispatchers.IO) {
+                try {
+                    vault.read(project, chapter)?.let { text ->
+                        MarkdownParser.parse(text, markdown = true).withoutOpeningTitle(chapter.title)
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+            }?.takeIf { it.isNotEmpty() }
+            Result.success(saved ?: FreeWebNovelClient.loadChapter(chapter.uri))
+        } else {
+            Result.success(
+                withContext(Dispatchers.IO) {
+                    val text = ChapterSource.read(context, Uri.parse(chapter.uri))
+                    MarkdownParser.parse(text, chapter.isMarkdown).withoutOpeningTitle(chapter.title)
+                },
+            )
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /** [readChapter], but a second caller joins the first read instead of fetching it again. */
+    suspend fun readOnce(chapter: Chapter): Result<List<Block>> {
+        val work = inFlight.computeIfAbsent(chapter.uri) {
+            scope.async(Dispatchers.IO) { readChapter(chapter) }
+        }
+        // Registered outside the map's mapping function; repeat callers just install a no-op.
+        work.invokeOnCompletion { inFlight.remove(chapter.uri, work) }
+        return work.await()
+    }
+
     LaunchedEffect(project.id, index, attempt) {
         loading = true
         loadError = null
@@ -164,28 +219,13 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
 
-        val outcome = if (chapter.remote) {
-            // A downloaded chapter opens from the vault, offline; anything else comes from the site.
-            val saved = withContext(Dispatchers.IO) {
-                runCatching {
-                    vault.read(project, chapter)?.let { text ->
-                        MarkdownParser.parse(text, markdown = true).withoutOpeningTitle(chapter.title)
-                    }
-                }.getOrNull()
-            }?.takeIf { it.isNotEmpty() }
-            if (saved != null) Result.success(saved) else runCatching { FreeWebNovelClient.loadChapter(chapter.uri) }
-        } else {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val text = ChapterSource.read(context, Uri.parse(chapter.uri))
-                    MarkdownParser
-                        .parse(text, chapter.isMarkdown)
-                        .withoutOpeningTitle(chapter.title)
-                }
-            }
-        }
+        val cached = chapterCache.get(chapter.uri)
+        val outcome = if (cached != null) Result.success(cached) else readOnce(chapter)
         outcome.fold(
-            onSuccess = { blocks = it },
+            onSuccess = { loaded ->
+                blocks = loaded
+                chapterCache.put(chapter.uri, loaded)
+            },
             onFailure = {
                 blocks = emptyList()
                 loadError = if (chapter.remote) {
@@ -200,6 +240,22 @@ fun ReaderScreen(
             },
         )
         loading = false
+
+        // Read the neighbours ahead once this chapter has settled. Next may come from the site;
+        // the previous one only when it is already on disk, so flipping back cannot hit the site.
+        if (outcome.isSuccess) {
+            delay(700)
+            val next = chapters.getOrNull(index + 1)
+            if (next != null && chapterCache.get(next.uri) == null) {
+                readOnce(next).getOrNull()?.let { chapterCache.put(next.uri, it) }
+            }
+            val previous = chapters.getOrNull(index - 1)
+            val onDisk = previous != null &&
+                (!previous.remote || withContext(Dispatchers.IO) { vault.has(project, previous) })
+            if (previous != null && onDisk && chapterCache.get(previous.uri) == null) {
+                readOnce(previous).getOrNull()?.let { chapterCache.put(previous.uri, it) }
+            }
+        }
     }
 
     LaunchedEffect(project.id, index) {
@@ -209,18 +265,29 @@ fun ReaderScreen(
         rewritePos = 0 to 0
         rewriteError = null
         val chapter = chapters.getOrNull(index)
-        rewriteBlocks = chapter?.let {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    rewrites.read(project, it)?.let { saved ->
-                        MarkdownParser.parse(saved.chapter, markdown = true).withoutOpeningTitle(it.title)
-                    }
-                }.getOrNull()
-            }
+        val saved = chapter?.let {
+            withContext(Dispatchers.IO) { runCatching { rewrites.read(project, it) }.getOrNull() }
         }
+        rewriteBlocks = saved?.let {
+            runCatching {
+                MarkdownParser.parse(it.chapter, markdown = true).withoutOpeningTitle(chapter!!.title)
+            }.getOrNull()
+        }
+        rewriteSourceHash = saved?.sourceHash
         // A place restored from the last visit decides its own tab; every other chapter follows the preference.
         if (pendingRestore?.chapterIndex != index) showRewrite = preferRewrite && rewriteBlocks != null
         rewriteChecked = true
+    }
+
+    // A rewrite made from an older version of the chapter is still usable, but the reader is told.
+    LaunchedEffect(project.id, index, blocks, rewriteBlocks, rewriteSourceHash) {
+        val savedHash = rewriteSourceHash
+        if (savedHash == null || blocks.isEmpty()) {
+            rewriteStale = false
+            return@LaunchedEffect
+        }
+        val current = withContext(Dispatchers.IO) { RewriteStore.sourceHash(MarkdownWriter.write(blocks)) }
+        rewriteStale = current != savedHash
     }
 
     fun startRewrite() {
@@ -251,6 +318,8 @@ fun ReaderScreen(
                 if (chapters.getOrNull(index) == chapter) {
                     if (!showRewrite) originalPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
                     rewriteBlocks = parsed
+                    rewriteSourceHash = withContext(Dispatchers.IO) { RewriteStore.sourceHash(MarkdownWriter.write(source)) }
+                    rewriteStale = false
                     showRewrite = true
                     preferRewrite = true
                     // A fresh rewrite is read from its start.
@@ -379,6 +448,7 @@ fun ReaderScreen(
             chapterPercent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent else null,
             showRewrite = showRewrite,
             hasRewrite = rewriteBlocks != null,
+            stale = rewriteStale,
             rewriting = rewriting,
             words = rewriteChars / 6,
             status = rewriteStatus,
@@ -521,23 +591,35 @@ fun ReaderScreen(
         )
     }
 
+    LaunchedEffect(showRewriteSettings, project.id, index, rewriting) {
+        if (!showRewriteSettings) return@LaunchedEffect
+        settingsSnapshot = withContext(Dispatchers.IO) {
+            val built = rewrites.bible(project).built()
+            SettingsSnapshot(
+                memoryChapters = built.size,
+                earlierRead = chapters.take(index).map { it.uri in built },
+                rewritten = rewrites.rewrittenPositions(project, chapters),
+            )
+        }
+    }
+
     if (showRewriteSettings) {
         RewriteSettingsScreen(
             initial = remember { rewrites.settings() },
-            memoryChapters = remember(showRewriteSettings) { rewrites.bible(project).built().size },
-            earlierRead = remember(showRewriteSettings, index) {
-                val built = rewrites.bible(project).built()
-                chapters.take(index).map { it.uri in built }
-            },
+            memoryChapters = settingsSnapshot.memoryChapters,
+            earlierRead = settingsSnapshot.earlierRead,
             // Sealing the key is Keystore work: keep it off the main thread.
             onChange = { next -> scope.launch(Dispatchers.IO) { rewrites.saveSettings(next) } },
-            onRebuildMemory = { rewrites.bible(project).clear() },
+            onRebuildMemory = {
+                rewrites.bible(project).clear()
+                settingsSnapshot = SettingsSnapshot()
+            },
             onBack = { showRewriteSettings = false },
             ahead = AheadSetup(
                 projectId = project.id,
                 chapterLabels = remember(project.id, chapters.size) { chapters.mapIndexed { i, c -> "Chapter ${c.number(i)} · ${c.title}" } },
                 currentIndex = index,
-                rewritten = remember(showRewriteSettings, project.id) { rewrites.rewrittenPositions(project, chapters) },
+                rewritten = settingsSnapshot.rewritten,
                 busy = rewriting,
             ),
             onStartAhead = { queue -> com.mdreader.data.RewriteBatchService.start(context, project.id, queue) },
@@ -873,6 +955,7 @@ private fun RewriteTabs(
     chapterPercent: Int?,
     showRewrite: Boolean,
     hasRewrite: Boolean,
+    stale: Boolean,
     rewriting: Boolean,
     words: Int,
     status: String?,
@@ -955,7 +1038,11 @@ private fun RewriteTabs(
             onStop,
         )
         showRewrite && hasRewrite -> Triple(
-            if (confirmAgain) "Replace this rewrite?" else place,
+            when {
+                confirmAgain -> "Replace this rewrite?"
+                stale -> "$place · source changed"
+                else -> place
+            },
             if (confirmAgain) "TAP AGAIN TO REPLACE" else "REWRITE AGAIN",
             {
                 if (confirmAgain) {
@@ -966,7 +1053,7 @@ private fun RewriteTabs(
                 }
             },
         )
-        else -> Triple(place, null, {})
+        else -> Triple(if (stale && hasRewrite) "$place · source changed" else place, null, {})
     }
     Row(
         modifier = Modifier
@@ -1003,3 +1090,10 @@ private fun RewriteTabs(
         }
     }
 }
+
+/** What the rewrite settings sheet needs from disk, read once when it opens. */
+private data class SettingsSnapshot(
+    val memoryChapters: Int = 0,
+    val earlierRead: List<Boolean> = emptyList(),
+    val rewritten: Set<Int> = emptySet(),
+)

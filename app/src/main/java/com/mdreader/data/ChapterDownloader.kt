@@ -19,6 +19,9 @@ sealed interface DownloadRequest {
 
     /** Every unsaved chapter in the novel. */
     data object All : DownloadRequest
+
+    /** Every chapter already saved, fetched again so an updated site text replaces the old copy. */
+    data object Refresh : DownloadRequest
 }
 
 /** What the page shows while chapters are being saved. */
@@ -43,11 +46,15 @@ fun planDownload(
     resumeIndex: Int?,
     request: DownloadRequest,
 ): List<Int> {
+    if (request == DownloadRequest.Refresh) {
+        return chapters.indices.filter { chapters[it].uri in downloaded }
+    }
     val start = if (request == DownloadRequest.All) 0 else (resumeIndex ?: 0).coerceIn(0, chapters.size)
     val missing = (start until chapters.size).filter { chapters[it].uri !in downloaded }
     return when (request) {
         is DownloadRequest.Next -> missing.take(request.count.coerceAtLeast(0))
         DownloadRequest.Unread, DownloadRequest.All -> missing
+        DownloadRequest.Refresh -> emptyList() // handled above
     }
 }
 
@@ -118,6 +125,8 @@ suspend fun downloadChapters(
     cooldownMs: Long = 1_000,
     maxConsecutiveFailures: Int = 3,
     fetch: suspend (String) -> List<Block> = FreeWebNovelClient::loadChapter,
+    /** Fetch saved chapters again instead of skipping them, replacing their files. */
+    refresh: Boolean = false,
     onProgress: (DownloadProgress) -> Unit,
 ): DownloadProgress {
     var progress = DownloadProgress(running = true, total = positions.size)
@@ -131,7 +140,7 @@ suspend fun downloadChapters(
     for (position in positions) {
         coroutineContext.ensureActive()
         val chapter = project.chapters.getOrNull(position)
-        if (chapter == null || vault.has(project, chapter)) {
+        if (chapter == null || (!refresh && vault.has(project, chapter))) {
             progress = progress.copy(done = progress.done + 1)
             onProgress(progress)
             continue

@@ -60,6 +60,12 @@ class ChapterDownloaderTest {
     }
 
     @Test
+    fun `refresh plans every saved chapter in reading order`() {
+        val saved = setOf(0, 1, 2, 5, 9).map { chapters[it].uri }.toSet()
+        assertEquals(listOf(0, 1, 2, 5, 9), planDownload(chapters, saved, resumeIndex = 5, DownloadRequest.Refresh))
+    }
+
+    @Test
     fun `everything saved plans nothing`() {
         assertEquals(emptyList<Int>(), planDownload(chapters, chapters.map { it.uri }.toSet(), 0, DownloadRequest.All))
     }
@@ -78,6 +84,23 @@ class ChapterDownloaderTest {
         assertEquals("3 chapters saved", result.message)
         assertEquals(3, seen.last().done)
         assertTrue(File(v.folder(project), "_novel.md").isFile)
+    }
+
+    @Test
+    fun `refresh fetches saved chapters again and replaces their text`() = runBlocking {
+        val v = vault()
+        downloadChapters(project, listOf(0), v, null, "d", cooldownMs = 0,
+            fetch = { body("old text") }, onProgress = {})
+        assertTrue(v.read(project, chapters[0])!!.contains("old text"))
+
+        val fetched = mutableListOf<String>()
+        val plan = planDownload(chapters, v.downloaded(project), 0, DownloadRequest.Refresh)
+        downloadChapters(project, plan, v, null, "d", cooldownMs = 0,
+            fetch = { fetched += it; body("new text") }, refresh = true, onProgress = {})
+
+        assertEquals(listOf(chapters[0].uri), fetched)
+        assertTrue(v.read(project, chapters[0])!!.contains("new text"))
+        assertEquals(1, v.count(project))
     }
 
     @Test

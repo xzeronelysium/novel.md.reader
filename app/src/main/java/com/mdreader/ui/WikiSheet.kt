@@ -180,7 +180,7 @@ private fun FrontPage(bible: BibleStore, index: WikiIndex, upTo: Int, open: (Wik
                 Row(Modifier.padding(vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.width(34.dp)) { Micro(text = chapter?.groupValues?.get(1) ?: "", accent = true) }
                     Text(
-                        text = AnnotatedString(chapter?.let { line.removeRange(it.range) } ?: line).withWikiLinks(),
+                        text = AnnotatedString(chapter?.let { line.removeRange(it.range) } ?: line).withWikiLinks(line),
                         style = TextStyle(fontFamily = FontFamily.Serif, fontSize = 15.sp, lineHeight = 23.sp),
                         color = scheme.onSurface,
                         modifier = Modifier.weight(1f),
@@ -244,7 +244,7 @@ private fun PageBody(entry: WikiEntry, page: WikiPage?, upTo: Int) {
                     Box(Modifier.fillMaxHeight().width(2.dp).background(scheme.primary))
                     Column(Modifier.weight(1f).padding(horizontal = 16.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Micro(text = "Now · ch ${now.chapter}", accent = true)
-                        Text(AnnotatedString(now.text).withWikiLinks(), style = FactStyle(), color = scheme.onSurface)
+                        Text(AnnotatedString(now.text).withWikiLinks(now), style = FactStyle(), color = scheme.onSurface)
                     }
                 }
             }
@@ -293,7 +293,7 @@ private fun FactRow(fact: WikiFact, inferred: Boolean = false) {
     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.width(34.dp).padding(top = 5.dp)) { Micro(text = fact.chapter.toString(), accent = true) }
         Text(
-            text = AnnotatedString(fact.text).withWikiLinks(),
+            text = AnnotatedString(fact.text).withWikiLinks(fact),
             style = FactStyle().copy(fontStyle = if (inferred) FontStyle.Italic else FontStyle.Normal),
             color = if (inferred) scheme.onSurfaceVariant else scheme.onSurface,
             modifier = Modifier.weight(1f),
