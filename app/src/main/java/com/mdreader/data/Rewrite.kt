@@ -109,8 +109,20 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
 
     private val settingsFile = File(filesDir, "rewrite-settings.json")
 
+    /** The settings as last read or saved: the Keystore is opened once, not once per chapter. */
+    private var cachedSettings: RewriteSettings? = null
+    private var settingsLoads = 0
+
     @Synchronized
-    fun settings(): RewriteSettings = runCatching {
+    fun settings(): RewriteSettings = cachedSettings ?: loadSettings().also {
+        cachedSettings = it
+        settingsLoads++
+    }
+
+    /** How many times the file (and the sealed key) was read; a seam for tests. */
+    internal fun settingsLoads(): Int = synchronized(this) { settingsLoads }
+
+    private fun loadSettings(): RewriteSettings = runCatching {
         val json = JSONObject(settingsFile.readText())
         RewriteSettings(
             provider = json.optString("provider", RewriteSettings.OLLAMA),
@@ -153,6 +165,13 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
             settingsFile.writeText(json.toString())
             temp.delete()
         }
+        cachedSettings = settings.copy(
+            baseUrl = settings.baseUrl.trim(),
+            apiKey = settings.apiKey.trim(),
+            model = settings.model.trim(),
+            effort = settings.effort.trim(),
+            xai = grant,
+        )
     }
 
     @Synchronized
@@ -211,8 +230,15 @@ class RewriteStore(private val filesDir: File, private val box: SecretBox = Keys
     }
 
     companion object {
-        fun of(context: android.content.Context) = RewriteStore(context.filesDir, KeystoreSecretBox).also { store ->
-            XaiTokens.save = { fresh -> store.saveSettings(store.settings().copy(xai = fresh)) }
+        @Volatile
+        private var shared: RewriteStore? = null
+
+        /** One store per process, so its settings cache (and the warm-up at launch) is shared. */
+        fun of(context: android.content.Context): RewriteStore = shared ?: synchronized(this) {
+            shared ?: RewriteStore(context.filesDir, KeystoreSecretBox).also { store ->
+                XaiTokens.save = { fresh -> store.saveSettings(store.settings().copy(xai = fresh)) }
+                shared = store
+            }
         }
     }
 }

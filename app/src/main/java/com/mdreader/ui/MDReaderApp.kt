@@ -20,6 +20,7 @@ import com.mdreader.data.DownloadRequest
 import com.mdreader.data.formatBytes
 import com.mdreader.data.DownloadProgress
 import com.mdreader.data.Vault
+import com.mdreader.data.RewriteStore
 import com.mdreader.data.downloadChapters
 import com.mdreader.data.planDownload
 import com.mdreader.data.ImportException
@@ -53,6 +54,7 @@ fun MDReaderApp() {
     val store = remember { LibraryStore(context.applicationContext) }
     val snackbarHostState = remember { SnackbarHostState() }
     val vault = remember { Vault.of(context.applicationContext) }
+    val rewrites = remember { RewriteStore.of(context.applicationContext) }
     // Bumped whenever a chapter is saved or deleted, so the page redraws its "saved" marks.
     var vaultTick by remember { mutableIntStateOf(0) }
     var download by remember { mutableStateOf(DownloadProgress()) }
@@ -76,7 +78,12 @@ fun MDReaderApp() {
     var previewStart by remember { mutableStateOf<Progress?>(null) }
 
     LaunchedEffect(Unit) {
-        projects = withContext(Dispatchers.IO) { store.load() }
+        // Read the settings once, off the main thread, so opening a chapter never touches the
+        // Keystore again.
+        projects = withContext(Dispatchers.IO) {
+            rewrites.settings()
+            store.load()
+        }
         textSizeLevel = store.textSizeLevel()
         loading = false
     }
@@ -203,7 +210,7 @@ fun MDReaderApp() {
         withContext(Dispatchers.IO) {
             store.remove(project.id)
             vault.deleteAll(project)
-            com.mdreader.data.RewriteStore.of(context.applicationContext).deleteAll(project)
+            rewrites.deleteAll(project)
         }
         vaultTick++
     }

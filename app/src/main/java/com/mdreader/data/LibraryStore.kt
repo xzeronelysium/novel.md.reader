@@ -6,12 +6,19 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * The whole library lives in one small JSON file. A database would be overkill
- * for a handful of projects, and this keeps the app free of annotation processors.
+ * The shelf lives in two small JSON files. Structure — novels, chapter lists, covers — changes
+ * rarely and goes to `library.json`. Reading position and text size change constantly and go to
+ * `progress.json`, a few hundred bytes, so a scroll never rewrites the whole library.
+ *
+ * Older versions kept both in `library.json`; the first load moves a legacy progress block into
+ * `progress.json` and rewrites the library without it.
  */
-class LibraryStore(context: Context) {
+class LibraryStore(private val filesDir: File) {
 
-    private val file = File(context.filesDir, "library.json")
+    constructor(context: Context) : this(context.filesDir)
+
+    private val libraryFile = File(filesDir, "library.json")
+    private val progressFile = File(filesDir, "progress.json")
     private val projects = mutableListOf<Project>()
     private val progressById = mutableMapOf<String, Progress>()
     private var loaded = false
@@ -46,7 +53,7 @@ class LibraryStore(context: Context) {
         } else {
             projects += project
         }
-        persist()
+        persistLibrary()
     }
 
     @Synchronized
@@ -54,7 +61,8 @@ class LibraryStore(context: Context) {
         ensureLoaded()
         projects.removeAll { it.id == id }
         progressById.remove(id)
-        persist()
+        persistLibrary()
+        persistProgress()
     }
 
     @Synchronized
@@ -76,7 +84,7 @@ class LibraryStore(context: Context) {
         val clamped = level.coerceIn(0, 2)
         if (clamped == textSizeLevel) return
         textSizeLevel = clamped
-        persist()
+        persistProgress()
     }
 
     @Synchronized
@@ -85,24 +93,54 @@ class LibraryStore(context: Context) {
         val existing = progressById[projectId]
         if (existing != null && existing.copy(updatedAt = 0) == progress.copy(updatedAt = 0)) return
         progressById[projectId] = progress.copy(updatedAt = System.currentTimeMillis())
-        persist()
+        persistProgress()
     }
 
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
-        if (!file.exists()) return
 
-        runCatching {
-            val root = JSONObject(file.readText())
-            val projectArray = root.optJSONArray("projects") ?: JSONArray()
-            for (i in 0 until projectArray.length()) {
-                // One bad entry must not wipe out the rest of the library.
-                runCatching { projects += readProject(projectArray.getJSONObject(i)) }
+        var legacyProgress: JSONObject? = null
+        var legacyTextSize: Int? = null
+        if (libraryFile.exists()) {
+            runCatching {
+                val root = JSONObject(libraryFile.readText())
+                val projectArray = root.optJSONArray("projects") ?: JSONArray()
+                for (i in 0 until projectArray.length()) {
+                    // One bad entry must not wipe out the rest of the library.
+                    runCatching { projects += readProject(projectArray.getJSONObject(i)) }
+                }
+                legacyProgress = root.optJSONObject("progress")
+                if (root.has("textSize")) legacyTextSize = root.optInt("textSize", 1).coerceIn(0, 2)
+            }.onFailure {
+                // A corrupt file should not brick the app; start with an empty library.
+                projects.clear()
+                progressById.clear()
             }
+        }
 
-            val progressObject = root.optJSONObject("progress") ?: JSONObject()
-            progressObject.keys().forEach { key ->
+        val progressRoot = progressFile.takeIf { it.isFile }
+            ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
+
+        if (progressRoot != null) {
+            readProgress(progressRoot.optJSONObject("progress") ?: JSONObject())
+            textSizeLevel = progressRoot.optInt("textSize", 1).coerceIn(0, 2)
+        } else {
+            legacyProgress?.let(::readProgress)
+            legacyTextSize?.let { textSizeLevel = it }
+            if (legacyProgress != null || legacyTextSize != null) {
+                // Write the new file first: a crash here leaves the legacy copy intact.
+                val moved = runCatching { persistProgress() }.isSuccess && progressFile.isFile
+                // Only then drop the old block, and only if the new one really is on disk.
+                if (moved) runCatching { persistLibrary() }
+            }
+        }
+    }
+
+    /** Reads a map of project id to position, as both `progress.json` and the legacy block hold it. */
+    private fun readProgress(progressObject: JSONObject) {
+        progressObject.keys().forEach { key ->
+            runCatching {
                 val value = progressObject.getJSONObject(key)
                 progressById[key] = Progress(
                     chapterIndex = value.optInt("chapterIndex", 0),
@@ -115,12 +153,6 @@ class LibraryStore(context: Context) {
                     rewriteOffset = value.optInt("rewriteOffset", 0),
                 )
             }
-
-            textSizeLevel = root.optInt("textSize", 1).coerceIn(0, 2)
-        }.onFailure {
-            // A corrupt file should not brick the app; start with an empty library.
-            projects.clear()
-            progressById.clear()
         }
     }
 
@@ -153,9 +185,8 @@ class LibraryStore(context: Context) {
         )
     }
 
-    private fun persist() {
-        val root = JSONObject()
-
+    /** Novels only: no reading position, so this runs only when the shelf changes. */
+    private fun persistLibrary() {
         val projectArray = JSONArray()
         projects.forEach { project ->
             val chaptersArray = JSONArray()
@@ -182,8 +213,11 @@ class LibraryStore(context: Context) {
                     .put("chapters", chaptersArray)
             )
         }
-        root.put("projects", projectArray)
+        writeAtomically(libraryFile, JSONObject().put("projects", projectArray).toString())
+    }
 
+    /** Position and text size: small and written on every scroll pause. */
+    private fun persistProgress() {
         val progressObject = JSONObject()
         progressById.forEach { (id, progress) ->
             progressObject.put(
@@ -199,13 +233,17 @@ class LibraryStore(context: Context) {
                     .put("rewriteOffset", progress.rewriteOffset)
             )
         }
-        root.put("progress", progressObject)
-        root.put("textSize", textSizeLevel)
+        writeAtomically(
+            progressFile,
+            JSONObject().put("progress", progressObject).put("textSize", textSizeLevel).toString(),
+        )
+    }
 
-        val temp = File(file.parentFile, "${file.name}.tmp")
-        temp.writeText(root.toString())
-        if (!temp.renameTo(file)) {
-            file.writeText(root.toString())
+    private fun writeAtomically(target: File, text: String) {
+        val temp = File(target.parentFile, "${target.name}.tmp")
+        temp.writeText(text)
+        if (!temp.renameTo(target)) {
+            target.writeText(text)
             temp.delete()
         }
     }

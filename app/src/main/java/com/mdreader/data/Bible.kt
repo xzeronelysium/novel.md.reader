@@ -27,6 +27,14 @@ class BibleStore(private val root: File) {
 
     private val citation = Regex("""\(\s*Ch(?:apters?|\.)?\s*\d+""", RegexOption.IGNORE_CASE)
 
+    /** One sheet as last read, so opening a chapter does not re-read every file on disk. */
+    private class Sheet(val kind: String, val name: String, val lines: List<String>)
+
+    private var sheets: List<Sheet> = emptyList()
+    private var sheetsVersion = -1
+    private var version = 0
+    private var sheetBuilds = 0
+
     @Synchronized
     fun built(): Set<String> = file("_built.txt").takeIf { it.isFile }?.readLines()?.toSet().orEmpty()
 
@@ -34,6 +42,7 @@ class BibleStore(private val root: File) {
     @Synchronized
     fun clear() {
         root.deleteRecursively()
+        invalidateSheets()
     }
 
     @Synchronized
@@ -48,7 +57,7 @@ class BibleStore(private val root: File) {
      * title) lands on that thing's sheet, never on a new one; see [canonical].
      */
     @Synchronized
-    fun merge(updates: String): Int = mergeClean(tidy(updates))
+    fun merge(updates: String): Int = mergeClean(tidy(updates)).also { invalidateSheets() }
 
     /**
      * Gemma-sized models dress replies up: code fences, bold headings, "1." numbering, "* " bullets,
@@ -66,6 +75,29 @@ class BibleStore(private val root: File) {
         ls.any { it.startsWith("## ") && targetOf(it.removePrefix("## ").trim()) != null } &&
             ls.any { it.startsWith("- ") && citation.containsMatchIn(it) }
     }
+
+    /** Sheet files as last read; refreshed only when [merge] or [clear] changes them. */
+    @Synchronized
+    private fun sheetCache(): List<Sheet> {
+        if (sheetsVersion == version) return sheets
+        sheets = KINDS.flatMap { kind ->
+            File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().sortedBy { it.name }.mapNotNull { f ->
+                val lines = runCatching { f.readLines() }.getOrNull() ?: return@mapNotNull null
+                Sheet(kind, f.nameWithoutExtension, lines)
+            }
+        }
+        sheetsVersion = version
+        sheetBuilds++
+        return sheets
+    }
+
+    @Synchronized
+    private fun invalidateSheets() {
+        version++
+    }
+
+    /** How many times the sheets were read from disk; a seam for tests. */
+    internal fun sheetCacheBuilds(): Int = synchronized(this) { sheetBuilds }
 
     private fun mergeClean(updates: String): Int {
         val sections = LinkedHashMap<String, MutableList<String>>()
@@ -180,11 +212,12 @@ class BibleStore(private val root: File) {
     /** Every sheet and what it answers to, for the extraction prompt: the model reuses these names. */
     @Synchronized
     fun roster(budget: Int = 2_500): String {
+        val sheets = sheetCache()
         val out = StringBuilder()
         for (kind in KINDS) {
-            val line = File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().sortedBy { it.name }.joinToString("; ") { f ->
-                val al = aliases(f.readLines()).take(5)
-                f.nameWithoutExtension + if (al.isEmpty()) "" else " (also ${al.joinToString(", ")})"
+            val line = sheets.filter { it.kind == kind }.joinToString("; ") { sheet ->
+                val al = aliases(sheet.lines).take(5)
+                sheet.name + if (al.isEmpty()) "" else " (also ${al.joinToString(", ")})"
             }
             if (line.isNotEmpty()) out.append("$kind: $line\n")
         }
@@ -195,14 +228,14 @@ class BibleStore(private val root: File) {
     @Synchronized
     fun context(text: String, budget: Int = 14_000): String {
         val lower = text.lowercase().replace('’', '\'')
-        val hits = listOf("people", "places", "systems").flatMap { kind ->
-            File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().mapNotNull { f ->
-                val lines = f.readLines()
-                val names = listOf(f.nameWithoutExtension) + aliases(lines)
+        val sheets = sheetCache()
+        val hits = KINDS.flatMap { kind ->
+            sheets.filter { it.kind == kind }.mapNotNull { sheet ->
+                val names = listOf(sheet.name) + aliases(sheet.lines)
                 // Whole words only: a sheet called "Lin" must not answer to "line".
                 val count = names.map { it.lowercase().replace('’', '\'') }.filter { it.length >= 3 }
                     .sumOf { Regex("(?<!\\p{L})" + Regex.escape(it) + "(?!\\p{L})").findAll(lower).count() }
-                if (count > 0) Triple(kind, trim(lines), count) else null
+                if (count > 0) Triple(kind, trim(sheet.lines), count) else null
             }
         }.sortedByDescending { it.third }
         val out = StringBuilder()
@@ -274,12 +307,9 @@ class BibleStore(private val root: File) {
     /** Every person, place or system with at least one fact cited at or before [upTo]. */
     @Synchronized
     fun index(upTo: Int): WikiIndex = WikiIndex(
-        KINDS.flatMap { kind ->
-            File(root, kind).listFiles { f -> f.extension == "md" }.orEmpty().mapNotNull { f ->
-                val lines = f.readLines()
-                if (lines.none { it.startsWith("- ") && firstChapter(it)?.let { n -> n <= upTo } == true }) return@mapNotNull null
-                WikiEntry(kind, f.nameWithoutExtension, aliases(lines.filter { firstChapter(it)?.let { n -> n <= upTo } == true }))
-            }
+        sheetCache().mapNotNull { sheet ->
+            val visible = sheet.lines.filter { it.startsWith("- ") && firstChapter(it)?.let { n -> n <= upTo } == true }
+            if (visible.isEmpty()) null else WikiEntry(sheet.kind, sheet.name, aliases(visible))
         }.groupBy { it.name.lowercase() }.values.map { same ->
             // One name on two shelves (a place that is also a system) is one entry; the page merges both.
             same.minByOrNull { KINDS.indexOf(it.kind) }!!.copy(aliases = same.flatMap { it.aliases }.distinct())

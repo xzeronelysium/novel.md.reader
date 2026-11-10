@@ -274,7 +274,7 @@ fun ReaderScreen(
     // quiet, the chapter is simply tried again the next time it is opened.
     // The read-ahead runs on its own job, so turning the page does not cut it off.
     LaunchedEffect(project.id, index, loading, rewriting, blocks.isNotEmpty()) {
-        val settings = rewrites.settings()
+        val settings = withContext(Dispatchers.IO) { rewrites.settings() }
         if (!settings.autoWiki || !settings.ready || loading || rewriting || blocks.isEmpty()) return@LaunchedEffect
         if (learnJob?.isActive == true || BatchRewrite.state.value.running) return@LaunchedEffect
         val upTo = ChapterRewriter.wikiTarget(rewrites, project, chapters, index) ?: return@LaunchedEffect
