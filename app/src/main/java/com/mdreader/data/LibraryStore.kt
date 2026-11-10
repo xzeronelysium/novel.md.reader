@@ -182,6 +182,16 @@ class LibraryStore(private val filesDir: File) {
             coverUrl = item.optString("coverUrl").ifEmpty { null },
             updatedAt = item.optLong("updatedAt", 0L),
             newChapters = item.optInt("newChapters", 0),
+            author = item.optString("author"),
+            authorPath = item.optString("authorPath"),
+            status = item.optString("status"),
+            synopsis = item.optString("synopsis"),
+            genres = item.optJSONArray("genres")?.let { array ->
+                (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotEmpty) }
+            }.orEmpty(),
+            rating = item.optString("rating"),
+            votes = item.optInt("votes", 0),
+            summaryAt = item.optLong("summaryAt", 0L),
         )
     }
 
@@ -210,6 +220,14 @@ class LibraryStore(private val filesDir: File) {
                     .apply { project.coverUrl?.let { put("coverUrl", it) } }
                     .apply { if (project.updatedAt > 0) put("updatedAt", project.updatedAt) }
                     .apply { if (project.newChapters > 0) put("newChapters", project.newChapters) }
+                    .apply { if (project.author.isNotEmpty()) put("author", project.author) }
+                    .apply { if (project.authorPath.isNotEmpty()) put("authorPath", project.authorPath) }
+                    .apply { if (project.status.isNotEmpty()) put("status", project.status) }
+                    .apply { if (project.synopsis.isNotEmpty()) put("synopsis", project.synopsis) }
+                    .apply { if (project.genres.isNotEmpty()) put("genres", JSONArray(project.genres)) }
+                    .apply { if (project.rating.isNotEmpty()) put("rating", project.rating) }
+                    .apply { if (project.votes > 0) put("votes", project.votes) }
+                    .apply { if (project.summaryAt > 0) put("summaryAt", project.summaryAt) }
                     .put("chapters", chaptersArray)
             )
         }

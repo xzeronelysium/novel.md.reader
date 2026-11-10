@@ -51,9 +51,26 @@ data class Project(
     val updatedAt: Long = 0,
     /** Chapters found by checks since the novel was last opened; shown as "+N" on the shelf. */
     val newChapters: Int = 0,
+    /** The last summary read from the site, so the detail page opens instantly and offline. */
+    val author: String = "",
+    val authorPath: String = "",
+    val status: String = "",
+    val synopsis: String = "",
+    val genres: List<String> = emptyList(),
+    val rating: String = "",
+    val votes: Int = 0,
+    /** When [author] and the rest were last read from the site; 0 when never. */
+    val summaryAt: Long = 0,
 ) {
     val isOnline: Boolean get() = onlinePath != null
 }
+
+/** Six hours: old enough to fetch again in the background, new enough to open without a request. */
+const val SUMMARY_TTL_MS = 6 * 60 * 60 * 1000L
+
+/** Whether the stored summary is missing or old enough to refresh on the next open. */
+fun Project.summaryIsStale(now: Long, ttl: Long = SUMMARY_TTL_MS): Boolean =
+    summaryAt == 0L || now - summaryAt > ttl || author.isEmpty()
 
 /** Where the reader left off, both by chapter and by scroll position inside it. */
 data class Progress(

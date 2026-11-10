@@ -31,9 +31,10 @@ import com.mdreader.data.Progress
 import com.mdreader.data.remapTo
 import com.mdreader.data.withChapters
 import com.mdreader.data.online.FreeWebNovelClient
-import com.mdreader.data.online.NovelDetails
 import com.mdreader.data.online.NovelHit
 import com.mdreader.data.online.OnlineException
+import com.mdreader.data.online.asDetails
+import com.mdreader.data.summaryIsStale
 import com.mdreader.data.toChapters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -228,26 +229,45 @@ fun MDReaderApp() {
             try {
                 val saved = libraryEntry(path)
                 if (saved != null) {
-                    // In the library: the list is already stored, so only the summary is fetched.
-                    // Offline still works; the page just lacks the summary.
+                    // Everything stored is on screen at once: chapters, cover and the last summary.
+                    val resume = store.progress(saved.id)?.remapTo(saved.chapters)?.chapterIndex
+                    val stored = saved.copy(newChapters = 0)
+                    detail = NovelDetailState(
+                        details = stored.asDetails(),
+                        project = stored,
+                        inLibrary = true,
+                        resumeIndex = resume,
+                        title = stored.name,
+                    )
+                    // Opening a novel clears its "+N" (and old entries pick up a cover later).
+                    if (stored != saved) {
+                        withContext(Dispatchers.IO) { store.addOrReplace(stored) }
+                        projects = withContext(Dispatchers.IO) { store.load() }
+                    }
+                    // The page is already usable; the summary is refreshed behind it, and only
+                    // when it is missing or old enough.
+                    if (!saved.summaryIsStale(System.currentTimeMillis())) return@launch
                     val info = try {
                         FreeWebNovelClient.loadNovelPage(path)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        NovelDetails(saved.name, "", "", emptyList(), "", 1)
+                        return@launch // offline: the stored page stays, no error
                     }
-                    val resume = store.progress(saved.id)?.remapTo(saved.chapters)?.chapterIndex
-                    // Opening a novel clears its "+N"; novels saved before covers existed pick theirs up here.
-                    val shown = saved.copy(
-                        coverUrl = saved.coverUrl ?: info.cover.ifEmpty { null },
-                        newChapters = 0,
+                    val enriched = stored.copy(
+                        author = info.author,
+                        authorPath = info.authorPath,
+                        status = info.status,
+                        synopsis = info.synopsis,
+                        genres = info.genres,
+                        rating = info.rating,
+                        votes = info.votes,
+                        coverUrl = stored.coverUrl ?: info.cover.ifEmpty { null },
+                        summaryAt = System.currentTimeMillis(),
                     )
-                    if (shown != saved) {
-                        withContext(Dispatchers.IO) { store.addOrReplace(shown) }
-                        projects = withContext(Dispatchers.IO) { store.load() }
-                    }
-                    detail = NovelDetailState(details = info, project = shown, inLibrary = true, resumeIndex = resume)
+                    withContext(Dispatchers.IO) { store.addOrReplace(enriched) }
+                    projects = withContext(Dispatchers.IO) { store.load() }
+                    detail = detail.copy(details = info, project = enriched, resumeIndex = resume)
                     return@launch
                 }
                 var loaded = 0
@@ -274,6 +294,14 @@ fun MDReaderApp() {
                     onlinePath = path,
                     totalChapters = chapters.size,
                     coverUrl = novel.details.cover.ifEmpty { null },
+                    author = novel.details.author,
+                    authorPath = novel.details.authorPath,
+                    status = novel.details.status,
+                    synopsis = novel.details.synopsis,
+                    genres = novel.details.genres,
+                    rating = novel.details.rating,
+                    votes = novel.details.votes,
+                    summaryAt = System.currentTimeMillis(),
                 )
                 detail = NovelDetailState(details = novel.details, project = project, inLibrary = false)
             } catch (e: CancellationException) {
@@ -295,7 +323,17 @@ fun MDReaderApp() {
                 val novel = FreeWebNovelClient.loadDetails(path, fresh = true)
                 val chapters = novel.chapters.toChapters()
                 // Looking at the novel right now, so what this check finds is not "new" to the reader.
-                val updated = current.withChapters(novel.details.title, chapters, novel.details.cover).copy(newChapters = 0)
+                val updated = current.withChapters(novel.details.title, chapters, novel.details.cover).copy(
+                    newChapters = 0,
+                    author = novel.details.author,
+                    authorPath = novel.details.authorPath,
+                    status = novel.details.status,
+                    synopsis = novel.details.synopsis,
+                    genres = novel.details.genres,
+                    rating = novel.details.rating,
+                    votes = novel.details.votes,
+                    summaryAt = System.currentTimeMillis(),
+                )
                 var resume = detail.resumeIndex
                 if (detail.inLibrary) {
                     withContext(Dispatchers.IO) {

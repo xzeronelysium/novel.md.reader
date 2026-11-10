@@ -78,6 +78,33 @@ class LibraryStoreTest {
     }
 
     @Test
+    fun summarySurvivesAReload() {
+        val dir = tmp.newFolder()
+        val novel = project().copy(
+            onlinePath = "/novel/x",
+            author = "Someone",
+            authorPath = "/author/someone",
+            status = "Ongoing",
+            synopsis = "A synopsis.",
+            genres = listOf("Fantasy", "Action"),
+            rating = "4.6",
+            votes = 1940,
+            summaryAt = 123L,
+        )
+        LibraryStore(dir).addOrReplace(novel)
+
+        val again = LibraryStore(dir).load().single()
+        assertEquals("Someone", again.author)
+        assertEquals("/author/someone", again.authorPath)
+        assertEquals("Ongoing", again.status)
+        assertEquals("A synopsis.", again.synopsis)
+        assertEquals(listOf("Fantasy", "Action"), again.genres)
+        assertEquals("4.6", again.rating)
+        assertEquals(1940, again.votes)
+        assertEquals(123L, again.summaryAt)
+    }
+
+    @Test
     fun removingAProjectForgetsItsProgress() {
         val dir = tmp.newFolder()
         val store = LibraryStore(dir)
