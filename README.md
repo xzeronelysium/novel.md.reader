@@ -24,3 +24,21 @@ Or download it on the phone itself and open it, allowing installs from unknown
 sources when Android asks. If you'd rather build it, run
 `./gradlew :app:assembleRelease` and check `PLAN.md` for how the whole thing
 fits together.
+
+## Desktop (Linux)
+
+Debian-based desktop build with the Swiss + sea-mist UI from
+`tools/desktop-mockup/`.
+
+```bash
+./gradlew :desktopApp:run
+```
+
+Library data: `~/.config/novel.md.reader/library.json` (or `$XDG_CONFIG_HOME`).
+Import uses the native folder dialog when `zenity` or `kdialog` is installed (typical on
+XFCE/KDE); otherwise a system-themed file chooser.
+
+Reader keys: **← / →** previous/next chapter; **↑ / ↓** scroll; **Page Up / Page Down** by
+screen; click the text area first if keys do not respond.
+
+Package a `.deb` with `./gradlew :desktopApp:packageDeb`.

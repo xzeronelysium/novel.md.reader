@@ -1,6 +1,5 @@
 package com.mdreader.ui
 
-import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,11 +14,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import com.mdreader.data.ChapterSource
-import com.mdreader.data.ImportException
+import com.mdreader.data.AndroidNovelFolderAccess
 import com.mdreader.data.LibraryStore
 import com.mdreader.data.Project
 import com.mdreader.data.importFolder
+import com.mdreader.data.refreshProject
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,7 +28,9 @@ import kotlinx.coroutines.withContext
 fun MDReaderApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val store = remember { LibraryStore(context.applicationContext) }
+    val store = remember {
+        LibraryStore(File(context.applicationContext.filesDir, "library.json"))
+    }
     val snackbarHostState = remember { SnackbarHostState() }
 
     var projects by remember { mutableStateOf<List<Project>>(emptyList()) }
@@ -82,8 +84,9 @@ fun MDReaderApp() {
             onOpen = { openProjectId = it.id },
             onRefresh = { project ->
                 scope.launch {
+                    val access = AndroidNovelFolderAccess(context)
                     val result = withContext(Dispatchers.IO) {
-                        refreshProject(context, project, store)
+                        refreshProject(project, access, store)
                     }
                     reloadLibrary()
                     result.fold(
@@ -121,22 +124,3 @@ fun MDReaderApp() {
  * Re-lists a folder to pick up chapters added or removed outside the app.
  * The saved reading position is preserved because the project id is kept.
  */
-private fun refreshProject(
-    context: Context,
-    project: Project,
-    store: LibraryStore,
-): Result<Project> = runCatching {
-    val treeUri = Uri.parse(project.treeUri)
-    if (!ChapterSource.hasPermission(context, treeUri)) {
-        throw ImportException("The folder is no longer accessible. Import it again.")
-    }
-
-    val chapters = ChapterSource.listChapters(context, treeUri)
-    if (chapters.isEmpty()) {
-        throw ImportException("No .md or .txt files are left in that folder.")
-    }
-
-    val updated = project.copy(chapters = chapters)
-    store.addOrReplace(updated)
-    updated
-}

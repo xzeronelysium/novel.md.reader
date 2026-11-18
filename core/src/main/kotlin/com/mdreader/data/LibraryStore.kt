@@ -1,6 +1,5 @@
 package com.mdreader.data
 
-import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -9,9 +8,8 @@ import java.io.File
  * The whole library lives in one small JSON file. A database would be overkill
  * for a handful of projects, and this keeps the app free of annotation processors.
  */
-class LibraryStore(context: Context) {
+class LibraryStore(private val file: File) {
 
-    private val file = File(context.filesDir, "library.json")
     private val projects = mutableListOf<Project>()
     private val progressById = mutableMapOf<String, Progress>()
     private var loaded = false
@@ -37,7 +35,6 @@ class LibraryStore(context: Context) {
             it.id == project.id || it.treeUri == project.treeUri
         }
         if (index >= 0) {
-            // Keep the original id so saved progress still points at this project.
             val previous = projects[index]
             projects[index] = project.copy(id = previous.id, importedAt = previous.importedAt)
         } else {
@@ -87,6 +84,7 @@ class LibraryStore(context: Context) {
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
+        file.parentFile?.mkdirs()
         if (!file.exists()) return
 
         runCatching {
@@ -102,7 +100,7 @@ class LibraryStore(context: Context) {
                             Chapter(
                                 name = chapter.getString("name"),
                                 uri = chapter.getString("uri"),
-                            )
+                            ),
                         )
                     }
                 }
@@ -127,7 +125,6 @@ class LibraryStore(context: Context) {
 
             textSizeLevel = root.optInt("textSize", 1).coerceIn(0, 2)
         }.onFailure {
-            // A corrupt file should not brick the app; start with an empty library.
             projects.clear()
             progressById.clear()
         }
@@ -143,7 +140,7 @@ class LibraryStore(context: Context) {
                 chaptersArray.put(
                     JSONObject()
                         .put("name", chapter.name)
-                        .put("uri", chapter.uri)
+                        .put("uri", chapter.uri),
                 )
             }
             projectArray.put(
@@ -152,7 +149,7 @@ class LibraryStore(context: Context) {
                     .put("name", project.name)
                     .put("treeUri", project.treeUri)
                     .put("importedAt", project.importedAt)
-                    .put("chapters", chaptersArray)
+                    .put("chapters", chaptersArray),
             )
         }
         root.put("projects", projectArray)
@@ -164,7 +161,7 @@ class LibraryStore(context: Context) {
                 JSONObject()
                     .put("chapterIndex", progress.chapterIndex)
                     .put("scrollIndex", progress.scrollIndex)
-                    .put("scrollOffset", progress.scrollOffset)
+                    .put("scrollOffset", progress.scrollOffset),
             )
         }
         root.put("progress", progressObject)

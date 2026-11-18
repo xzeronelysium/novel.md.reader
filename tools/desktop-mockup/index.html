@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>novel.md.reader — desktop mockup</title>
+  <style>
+    /*
+     * Desktop palette: Japanese + Swiss base, with sea-mist cool neutrals.
+     * Vermilion stays the sole warm accent; slate-teal carries metadata & grid.
+     */
+    :root {
+      --primary: #c53a2b;
+      --on-primary: #f6f4ef;
+      --sea: #3d5c5a;
+      --sea-soft: #5b7f7c;
+      --sea-mist: #e8eeec;
+      --ink: #141816;
+      --background: #f3f2ec;
+      --on-background: var(--ink);
+      --on-surface-variant: #4f5654;
+      --outline-variant: #c5cdc9;
+      --surface-container: #ecefe9;
+      --surface-rail: #e6ebe8;
+      --grid-faint: rgba(61, 92, 90, 0.06);
+      --rail-width: 252px;
+      --measure: 42rem;
+      --screen-pad: 32px;
+      --unit: 8px;
+      --font-sans: "Noto Sans", "Helvetica Neue", system-ui, sans-serif;
+      --font-serif: "Noto Serif", "Yu Mincho", Georgia, serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --primary: #e05a44;
+        --sea: #7a9a96;
+        --sea-soft: #8fb0ab;
+        --sea-mist: #1a2224;
+        --ink: #e8ecea;
+        --background: #0e1112;
+        --on-surface-variant: #9aa8a4;
+        --outline-variant: #2a3234;
+        --surface-container: #151a1c;
+        --surface-rail: #12171a;
+        --grid-faint: rgba(122, 154, 150, 0.08);
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --primary: #e05a44;
+      --sea: #7a9a96;
+      --sea-soft: #8fb0ab;
+      --sea-mist: #1a2224;
+      --ink: #e8ecea;
+      --background: #0e1112;
+      --on-surface-variant: #9aa8a4;
+      --outline-variant: #2a3234;
+      --surface-container: #151a1c;
+      --surface-rail: #12171a;
+      --grid-faint: rgba(122, 154, 150, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #1a1d1e;
+      color: #d8ddd9;
+      font-family: var(--font-sans);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px 48px;
+    }
+
+    .controls {
+      width: min(1280px, 100%);
+      margin-bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      align-items: center;
+      font-size: 13px;
+      color: #9aa8a4;
+    }
+
+    .controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .controls button {
+      font: inherit;
+      padding: 6px 12px;
+      border: 1px solid #3d4a4c;
+      background: #12171a;
+      color: #e8ecea;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+    }
+    .controls button[aria-pressed="true"] {
+      border-color: var(--sea-soft);
+      color: var(--sea-soft);
+    }
+
+    .window {
+      width: min(1280px, 100%);
+      height: min(800px, 85vh);
+      background: var(--background);
+      color: var(--on-background);
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--outline-variant);
+    }
+
+    .menubar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      padding: 10px 16px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      color: var(--on-surface-variant);
+      border-bottom: 1px solid var(--outline-variant);
+      background: var(--surface-rail);
+    }
+    .menubar .center {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--on-background);
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      font-size: 12px;
+    }
+    .menubar .seal {
+      width: 6px;
+      height: 6px;
+      background: var(--primary);
+    }
+    .menubar .right { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .workspace { flex: 1; display: flex; min-height: 0; }
+
+    .rail {
+      width: var(--rail-width);
+      flex-shrink: 0;
+      border-right: 1px solid var(--outline-variant);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--surface-rail);
+    }
+    .rail.hidden { width: 0; border: none; }
+
+    .micro {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--sea);
+      font-weight: 500;
+    }
+
+    .rail-head {
+      padding: calc(var(--unit) * 3) calc(var(--unit) * 2.5) calc(var(--unit) * 1.5);
+      border-bottom: 1px solid var(--outline-variant);
+    }
+    .rail-title {
+      margin-top: 10px;
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1.3;
+      letter-spacing: -0.02em;
+    }
+
+    .grid-rule {
+      height: 6px;
+      margin: calc(var(--unit) * 2) var(--screen-pad) 0;
+      position: relative;
+    }
+    .grid-rule::before {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      height: 1px;
+      background: var(--outline-variant);
+    }
+    .grid-rule .tick {
+      position: absolute;
+      top: 0;
+      width: 1px;
+      height: 5px;
+      background: var(--sea-soft);
+      opacity: 0.65;
+    }
+    .grid-rule .tick:nth-child(1) { left: 25%; }
+    .grid-rule .tick:nth-child(2) { left: 50%; }
+    .grid-rule .tick:nth-child(3) { left: 75%; }
+
+    .chapter-list { flex: 1; overflow: auto; padding: calc(var(--unit) * 1) 0; }
+    .chapter-list button {
+      display: grid;
+      grid-template-columns: 2.5em 1fr;
+      gap: 0 10px;
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      border-left: 2px solid transparent;
+      padding: 11px calc(var(--unit) * 2.5);
+      font: inherit;
+      font-size: 13px;
+      line-height: 1.35;
+      color: var(--on-surface-variant);
+      cursor: pointer;
+    }
+    .chapter-list button:hover {
+      background: var(--sea-mist);
+      color: var(--on-background);
+    }
+    .chapter-list button[aria-current="true"] {
+      color: var(--on-background);
+      background: var(--surface-container);
+      border-left-color: var(--primary);
+    }
+    .chapter-list .num {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      font-variant-numeric: tabular-nums;
+      color: var(--sea);
+      padding-top: 2px;
+    }
+
+    .import-row {
+      margin-top: auto;
+      padding: calc(var(--unit) * 2) calc(var(--unit) * 2.5);
+      border-top: 1px solid var(--outline-variant);
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .import-row:hover { background: var(--sea-mist); }
+    .import-box {
+      width: 26px;
+      height: 26px;
+      border: 1px solid var(--sea);
+      color: var(--sea);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      line-height: 1;
+    }
+
+    main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--background);
+      background-image: repeating-linear-gradient(
+        to bottom,
+        transparent,
+        transparent calc(var(--unit) * 4 - 1px),
+        var(--grid-faint) calc(var(--unit) * 4 - 1px),
+        var(--grid-faint) calc(var(--unit) * 4)
+      );
+    }
+
+    .reader-header {
+      padding: calc(var(--unit) * 2) calc(var(--unit) * 3);
+      border-bottom: 1px solid var(--outline-variant);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      flex-wrap: wrap;
+      background: var(--background);
+    }
+    .reader-header .ghost {
+      background: none;
+      border: none;
+      font: inherit;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--sea);
+      cursor: pointer;
+      padding: 0 0 4px;
+    }
+    .reader-header .ghost:hover { color: var(--on-background); }
+    .reader-nav { display: flex; gap: calc(var(--unit) * 1); }
+    .reader-nav button {
+      font: inherit;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 8px 14px;
+      border: 1px solid var(--outline-variant);
+      background: transparent;
+      color: var(--on-background);
+      cursor: pointer;
+    }
+    .reader-nav button:hover:not(:disabled) {
+      border-color: var(--sea-soft);
+      color: var(--sea);
+    }
+    .reader-nav button:disabled { opacity: 0.3; cursor: default; }
+
+    .progress-track {
+      height: 3px;
+      background: var(--outline-variant);
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary) 0%, var(--primary) 70%, var(--sea-soft) 100%);
+      width: 40%;
+      transition: width 200ms ease;
+    }
+
+    .catalog { flex: 1; overflow: auto; background: var(--background); }
+    .catalog-hero {
+      padding: calc(var(--unit) * 5) var(--screen-pad) calc(var(--unit) * 2);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 16px;
+    }
+    .catalog-hero h2 {
+      margin: 8px 0 0;
+      font-size: 38px;
+      font-weight: 500;
+      letter-spacing: -0.045em;
+      line-height: 0.95;
+    }
+    .catalog-hero .stat {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .catalog-hero .stat strong {
+      display: block;
+      font-size: 28px;
+      font-weight: 500;
+      letter-spacing: -0.03em;
+      color: var(--sea);
+    }
+
+    .catalog-head {
+      display: grid;
+      grid-template-columns: 3em 1fr 5em 6em;
+      gap: 12px;
+      padding: 12px var(--screen-pad);
+      border-bottom: 1px solid var(--outline-variant);
+      border-top: 1px solid var(--outline-variant);
+      background: var(--surface-container);
+    }
+    .catalog-row {
+      display: grid;
+      grid-template-columns: 3em 1fr 5em 6em;
+      gap: 12px;
+      align-items: baseline;
+      padding: 20px var(--screen-pad);
+      border-bottom: 1px solid var(--outline-variant);
+      cursor: pointer;
+    }
+    .catalog-row:hover { background: var(--sea-mist); }
+    .catalog-row .idx {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--sea);
+      font-variant-numeric: tabular-nums;
+    }
+    .catalog-row h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .seal { width: 7px; height: 7px; background: var(--primary); flex-shrink: 0; }
+    .meta {
+      color: var(--on-surface-variant);
+      font-size: 14px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .reader-scroll {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      justify-content: center;
+      padding: calc(var(--unit) * 5) calc(var(--unit) * 3) calc(var(--unit) * 6);
+      background: transparent;
+    }
+    article {
+      max-width: var(--measure);
+      width: 100%;
+      position: relative;
+    }
+    article::before,
+    article::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: var(--outline-variant);
+      opacity: 0.45;
+    }
+    article::before { left: -24px; }
+    article::after { right: -24px; }
+
+    article h1 {
+      margin: 10px 0 32px;
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.035em;
+      line-height: 1.12;
+      font-family: var(--font-sans);
+    }
+    .prose {
+      font-family: var(--font-serif);
+      font-size: 17.5px;
+      line-height: 1.88;
+      color: var(--on-background);
+    }
+    .prose p { margin: 0 0 1.25em; }
+    .prose blockquote {
+      margin: 1.75em 0;
+      padding: 0 0 0 18px;
+      border-left: 2px solid var(--sea-soft);
+      color: var(--on-surface-variant);
+      font-style: normal;
+    }
+    .prose em { color: var(--sea); font-style: italic; }
+
+    .library-rail .headline {
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.04em;
+      margin-top: 6px;
+    }
+
+    [data-panel="library"] .reader-only { display: none !important; }
+    [data-panel="reader"] .library-only { display: none !important; }
+
+    .hint {
+      width: min(1280px, 100%);
+      margin-top: 12px;
+      font-size: 12px;
+      color: #7a8a86;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls" role="toolbar" aria-label="Mockup options">
+    <span>View:</span>
+    <button type="button" id="btn-library" aria-pressed="false">Library</button>
+    <button type="button" id="btn-reader" aria-pressed="true">Reader</button>
+    <label><input type="checkbox" id="chk-rail" checked /> Chapter rail</label>
+    <label><input type="checkbox" id="chk-theme" /> Force dark</label>
+  </div>
+
+  <div class="window" id="app" data-panel="reader" role="application" aria-label="novel.md.reader desktop mockup">
+    <header class="menubar">
+      <span>FILE · VIEW · HELP</span>
+      <div class="center"><span class="seal" aria-hidden="true"></span> novel.md.reader</div>
+      <span class="right">1280 × 800</span>
+    </header>
+    <div class="workspace">
+      <aside class="rail library-only library-rail" id="library-rail">
+        <div class="rail-head">
+          <div class="micro">Shelf</div>
+          <div class="headline">Library</div>
+        </div>
+        <div class="import-row" tabindex="0">
+          <span class="import-box">+</span>
+          <span>IMPORT FOLDER</span>
+        </div>
+      </aside>
+
+      <aside class="rail reader-only" id="reader-rail">
+        <div class="rail-head">
+          <div class="micro">Index</div>
+          <div class="rail-title">The Sample Novel</div>
+        </div>
+        <nav class="chapter-list" aria-label="Chapters" id="chapter-nav"></nav>
+      </aside>
+
+      <main>
+        <section class="library-only catalog" aria-label="Novel catalog">
+          <div class="catalog-hero">
+            <div>
+              <div class="micro">Catalog</div>
+              <h2>Your novels</h2>
+              <p style="margin:10px 0 0;font-size:14px;color:var(--on-surface-variant)">Read in place · flat folders only</p>
+            </div>
+            <div class="stat">
+              <strong>03</strong>
+              <span class="micro" style="display:block;margin-top:4px">Projects</span>
+            </div>
+          </div>
+          <div class="grid-rule" aria-hidden="true"><span class="tick"></span><span class="tick"></span><span class="tick"></span></div>
+          <div class="catalog-head micro">
+            <span>No.</span>
+            <span>Title</span>
+            <span style="text-align:right">Ch.</span>
+            <span style="text-align:right">Last</span>
+          </div>
+          <div class="catalog-row">
+            <span class="idx">01</span>
+            <h3><span class="seal" aria-hidden="true"></span> The Sample Novel</h3>
+            <span class="meta">120</span>
+            <span class="meta">12</span>
+          </div>
+          <div class="catalog-row">
+            <span class="idx">02</span>
+            <h3>Side Stories</h3>
+            <span class="meta">8</span>
+            <span class="meta">3</span>
+          </div>
+          <div class="catalog-row">
+            <span class="idx">03</span>
+            <h3>Draft Arc</h3>
+            <span class="meta">45</span>
+            <span class="meta">—</span>
+          </div>
+        </section>
+
+        <section class="reader-only" style="display:flex;flex-direction:column;flex:1;min-height:0">
+          <header class="reader-header">
+            <div>
+              <button type="button" class="ghost" id="btn-toggle-rail">Hide index</button>
+              <div class="micro" style="margin-top:10px">The Sample Novel</div>
+              <div id="chapter-label" style="font-size:13px;color:var(--on-surface-variant);margin-top:4px;font-variant-numeric:tabular-nums"></div>
+            </div>
+            <div class="reader-nav">
+              <button type="button" id="btn-prev">Prev</button>
+              <button type="button" id="btn-next">Next</button>
+            </div>
+          </header>
+          <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="reader-scroll">
+            <article>
+              <div class="micro" id="chapter-num"></div>
+              <h1 id="chapter-title"></h1>
+              <div class="prose">
+                <p>The desk was wider than any phone screen. Prose sits in a measured column, framed by cool <em>sea-mist</em> neutrals and Swiss hairlines; vermilion still marks only what matters.</p>
+                <p>Navigation lives in the header and the left index. Tabular chapter numbers, an eight-pixel rhythm, and quiet grid ticks keep the layout honest without decoration.</p>
+                <blockquote>Warm paper, sumi ink, one warm accent — with slate-teal for the grid and the labels.</blockquote>
+                <p>Scroll the column; the index stays fixed. Arrow keys move between chapters.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <p class="hint">
+    Palette: vermilion primary + sea-slate metadata + mist surfaces. Open in a browser to review light/dark.
+  </p>
+
+  <script>
+    const chapters = [
+      { n: 1, title: "The Paper Door" },
+      { n: 2, title: "Vermilion Seal" },
+      { n: 3, title: "Natural Sort" },
+      { n: 4, title: "Hairline Grid" },
+      { n: 5, title: "Sumi Ink" },
+    ];
+    let index = 1;
+
+    const app = document.getElementById("app");
+    const nav = document.getElementById("chapter-nav");
+    const readerRail = document.getElementById("reader-rail");
+    const progressFill = document.getElementById("progress-fill");
+
+    function renderNav() {
+      nav.innerHTML = chapters.map((c, i) =>
+        `<button type="button" data-i="${i}" aria-current="${i === index}">
+          <span class="num micro">${String(c.n).padStart(2, "0")}</span>
+          <span>${c.title}</span>
+        </button>`
+      ).join("");
+      nav.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          index = Number(btn.dataset.i);
+          sync();
+        });
+      });
+    }
+
+    function sync() {
+      const ch = chapters[index];
+      document.getElementById("chapter-num").textContent = "Chapter " + ch.n;
+      document.getElementById("chapter-title").textContent = ch.title;
+      document.getElementById("chapter-label").textContent =
+        "Chapter " + ch.n + " of " + chapters.length;
+      document.getElementById("btn-prev").disabled = index === 0;
+      document.getElementById("btn-next").disabled = index === chapters.length - 1;
+      const pct = ((index + 1) / chapters.length) * 100;
+      progressFill.style.width = pct + "%";
+      renderNav();
+    }
+
+    document.getElementById("btn-library").addEventListener("click", () => {
+      app.dataset.panel = "library";
+      document.getElementById("btn-library").setAttribute("aria-pressed", "true");
+      document.getElementById("btn-reader").setAttribute("aria-pressed", "false");
+    });
+    document.getElementById("btn-reader").addEventListener("click", () => {
+      app.dataset.panel = "reader";
+      document.getElementById("btn-reader").setAttribute("aria-pressed", "true");
+      document.getElementById("btn-library").setAttribute("aria-pressed", "false");
+    });
+
+    document.getElementById("chk-rail").addEventListener("change", (e) => {
+      readerRail.classList.toggle("hidden", !e.target.checked);
+      document.getElementById("btn-toggle-rail").textContent =
+        e.target.checked ? "Hide index" : "Show index";
+    });
+
+    document.getElementById("btn-toggle-rail").addEventListener("click", () => {
+      const chk = document.getElementById("chk-rail");
+      chk.checked = !chk.checked;
+      chk.dispatchEvent(new Event("change"));
+    });
+
+    document.getElementById("chk-theme").addEventListener("change", (e) => {
+      document.documentElement.dataset.theme = e.target.checked ? "dark" : "";
+    });
+
+    document.getElementById("btn-prev").addEventListener("click", () => {
+      if (index > 0) { index--; sync(); }
+    });
+    document.getElementById("btn-next").addEventListener("click", () => {
+      if (index < chapters.length - 1) { index++; sync(); }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (app.dataset.panel !== "reader") return;
+      if (e.key === "ArrowLeft") document.getElementById("btn-prev").click();
+      if (e.key === "ArrowRight") document.getElementById("btn-next").click();
+    });
+
+    sync();
+  </script>
+</body>
+</html>

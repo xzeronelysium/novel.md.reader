@@ -1,6 +1,5 @@
 package com.mdreader.ui
 
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,7 +53,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mdreader.data.Chapter
-import com.mdreader.data.ChapterSource
+import com.mdreader.data.AndroidNovelFolderAccess
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
 import com.mdreader.md.Block
@@ -75,6 +74,7 @@ fun ReaderScreen(
     onProgress: (Progress) -> Unit,
 ) {
     val context = LocalContext.current
+    val access = remember(context) { AndroidNovelFolderAccess(context) }
     val chapters = project.chapters
     val lastIndex = chapters.lastIndex
 
@@ -99,7 +99,7 @@ fun ReaderScreen(
         }
 
         val outcome = withContext(Dispatchers.IO) {
-            runCatching { ChapterSource.read(context, Uri.parse(chapter.uri)) }
+            runCatching { access.readChapter(chapter.uri) }
         }
         outcome.fold(
             onSuccess = { text ->
