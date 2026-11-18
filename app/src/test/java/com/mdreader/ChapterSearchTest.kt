@@ -2,8 +2,8 @@ package com.mdreader
 
 import com.mdreader.data.Chapter
 import com.mdreader.ui.matching
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 
 class ChapterSearchTest {
 

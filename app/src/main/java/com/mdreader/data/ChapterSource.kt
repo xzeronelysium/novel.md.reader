@@ -4,6 +4,8 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
+import java.io.File
 import java.io.IOException
 
 /**
@@ -82,5 +84,43 @@ object ChapterSource {
         val stream = context.contentResolver.openInputStream(uri)
             ?: throw IOException("Could not open ${uri.lastPathSegment}")
         return stream.use { it.bufferedReader().use { reader -> reader.readText() } }
+    }
+
+    /**
+     * Resolves an image destination from a chapter against the chapter's own
+     * folder. Absolute URLs, content URIs, data URIs and file URIs pass through;
+     * relative paths are appended to the chapter's SAF parent document.
+     */
+    fun resolveImage(chapterUri: Uri, destination: String): Uri? {
+        val raw = destination.trim()
+        if (raw.isBlank()) return null
+
+        val scheme = raw.substringBefore(':', "").lowercase()
+        if (scheme in setOf("http", "https", "content", "file", "android.resource", "data")) {
+            return raw.toUri()
+        }
+
+        val decoded = Uri.decode(raw.substringBefore('#').substringBefore('?'))
+        if (decoded.startsWith("/")) return Uri.fromFile(File(decoded))
+
+        return runCatching {
+            val documentId = DocumentsContract.getDocumentId(chapterUri)
+            val parent = documentId.substringBeforeLast('/', "")
+            val combined = if (parent.isEmpty()) decoded else "$parent/$decoded"
+            val normalized = normalizeDocumentPath(combined)
+            DocumentsContract.buildDocumentUriUsingTree(chapterUri, normalized)
+        }.getOrNull()
+    }
+
+    private fun normalizeDocumentPath(path: String): String {
+        val stack = ArrayDeque<String>()
+        path.split('/').forEach { part ->
+            when (part) {
+                "", "." -> Unit
+                ".." -> if (stack.isNotEmpty()) stack.removeLast()
+                else -> stack.addLast(part)
+            }
+        }
+        return stack.joinToString("/")
     }
 }

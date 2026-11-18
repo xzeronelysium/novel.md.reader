@@ -1,7 +1,6 @@
 package com.mdreader.ui
 
 import android.content.Context
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
@@ -14,6 +13,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.ImportException
 import com.mdreader.data.LibraryStore
@@ -118,7 +118,7 @@ private fun refreshProject(
     project: Project,
     store: LibraryStore,
 ): Result<Project> = runCatching {
-    val treeUri = Uri.parse(project.treeUri)
+    val treeUri = project.treeUri.toUri()
     if (!ChapterSource.hasPermission(context, treeUri)) {
         throw ImportException("The folder is no longer accessible. Import it again.")
     }

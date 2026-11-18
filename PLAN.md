@@ -70,19 +70,25 @@ Serialized with Android's built-in `org.json` — zero extra dependencies, no an
 **3. Chapter list**
 - Modal bottom sheet listing chapters in reading order, current one highlighted; tap to jump.
 
-## Markdown subset (hand-rolled renderer)
+## Markdown engine
 
-Small parser, ~150 lines, no third-party markdown dependency:
+The reader uses `commonmark-java` for the CommonMark grammar plus the GFM
+extensions (tables, strikethrough, task lists, autolinks, footnotes, inserted
+text, YAML front matter). A pure-Kotlin converter turns the AST into the small
+`Block` / `InlineSpan` render model, and a native Compose renderer draws it:
 
-- ATX headings (`#`–`###`)
-- Bold / italic inline
-- Bullet and numbered lists
-- Blockquotes
-- Horizontal rules (`---`)
-- Fenced code blocks
-- Paragraphs and blank-line spacing
+- ATX + setext headings, paragraphs, hard/soft breaks, rules
+- Bold, italic, strikethrough, underline, highlight, superscript
+- Nested and loose/tight lists, task-list checkboxes
+- Blockquotes and GitHub alert callouts
+- Tables with alignment and inline formatting
+- Inline/reference links, bare autolinks, clickable links
+- Local/remote images, footnotes, inline/block HTML
+- Inline `$…$` and display `$$…$$` math
+- Fenced/indented code with language labels, syntax highlighting, copy
 
-`.txt` files bypass the parser and render as paragraphs. Anything unsupported degrades to plain text — never breaks the chapter.
+`.txt` files bypass the parser and render as paragraphs. Anything unsupported
+degrades to plain text — never breaks the chapter.
 
 ## Architecture
 
@@ -97,11 +103,12 @@ app/src/main/java/com/mdreader/
   ui/LibraryScreen.kt
   ui/ReaderScreen.kt
   ui/ChapterListSheet.kt
-  md/MarkdownParser.kt       // -> List<Block>
-  md/MarkdownText.kt         // Blocks -> Compose
+  md/Markdown.kt             // CommonMark -> List<Block>
+  ui/MarkdownView.kt         // Blocks -> Compose
+  ui/CodeHighlight.kt        // fenced-code syntax highlighting
 ```
 
-Toolchain: AGP 8.x, Gradle 8.13 (installed), JDK 21 (installed), compileSdk/targetSdk 36, minSdk 26.
+Toolchain: AGP 9.4.1 (built-in Kotlin 2.4.21), Gradle 9.8.1, Compose BOM 2026.09.00, JDK 17+ (21 installed), compileSdk/targetSdk 37, minSdk 26, JUnit Jupiter 6.1.3.
 
 ## Build order
 

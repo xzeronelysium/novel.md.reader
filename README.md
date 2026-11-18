@@ -14,8 +14,17 @@ Access Framework — nothing is copied into the app.
 ## Requirements
 
 - Android 8.0 (API 26) or newer
-- JDK 17+ and Android SDK 36 to build (this machine has both)
+- JDK 17+ and Android SDK Platform 37 to build (this machine has both)
 - `adb` for installing on a phone
+
+## Toolchain
+
+- Android Gradle plugin **9.4.1** with built-in Kotlin **2.4.21**
+- Gradle **9.8.1**
+- Jetpack Compose BOM **2026.09.00** (Compose 1.12, Material 3 1.4)
+- `compileSdk` / `targetSdk` **37**, `minSdk` **26**
+- JVM target **17**
+- JUnit Jupiter **6.1.3**
 
 ## Build
 
@@ -60,7 +69,7 @@ app/src/main/java/com/mdreader/
   data/LibraryStore.kt     library.json persistence
   data/NaturalSort.kt      filename comparator
   data/Models.kt           Chapter / Project / Progress
-  md/Markdown.kt           Markdown subset parser (pure Kotlin)
+  md/Markdown.kt           CommonMark/GFM -> render-model converter (pure Kotlin)
   ui/MDReaderApp.kt        library <-> reader routing
   ui/Design.kt             shared hairlines, micro labels, import action
   ui/LibraryScreen.kt
@@ -74,13 +83,34 @@ State lives in `filesDir/library.json` (projects, chapter URIs, reading
 positions). Uninstalling the app deletes that file, so the library has to be
 imported again — the chapter files themselves are never modified.
 
+## Markdown
+
+Markdown chapters are parsed as **CommonMark + GitHub-Flavored Markdown** and
+rendered natively in Compose (no WebView). Supported:
+
+- ATX and setext headings, paragraphs, hard/soft breaks, thematic rules
+- Bold, italic, strikethrough, `++underline++`, `==highlight==`, superscript
+- Inline code, fenced and indented code blocks, syntax highlighting, copy button
+- Nested bullet/ordered lists, loose/tight lists, task-list checkboxes
+- Blockquotes, including GitHub alerts (`[!NOTE]`, `[!WARNING]`, …)
+- Tables with alignment and inline formatting
+- Inline/reference links, bare autolinks, clickable HTTP/HTTPS/mail links
+- Images: local SAF-relative, `content://`, `file://`, and remote HTTP(S)
+- Footnotes with numbered references and a notes section at the end
+- Inline HTML, HTML blocks, YAML front matter (hidden)
+- Inline math (`$…$`) and display math (`$$…$$`), rendered in a math-style block
+
+`.txt` files bypass the parser and render one paragraph per line. Unknown or
+malformed Markdown always degrades to readable text rather than breaking the
+chapter.
+
 ## Tests
 
 ```bash
 gradle :app:testDebugUnitTest
 ```
 
-Covers natural sorting and the Markdown parser (17 tests).
+Covers natural sorting and the Markdown engine (47 tests).
 
 `tools/sample-novel/` holds 12 mixed `.md`/`.txt` chapters for trying the app:
 
@@ -96,6 +126,7 @@ Then import `/sdcard/Documents/sample-novel` in the app.
   it again.
 - No font size / theme controls, bookmarks, or full-text search inside a
   chapter yet. Chapter titles can be searched from the index.
-- Markdown covers headings, bold/italic/strikethrough, lists, quotes, rules,
-  fenced code. Anything else renders as plain text.
+- Math is displayed as styled text; there is no TeX typesetting engine.
+- Definition lists and inline footnotes (`^[text]`) are not part of the
+  CommonMark/GFM grammar and are not parsed.
 - Subfolders inside a novel folder are ignored.

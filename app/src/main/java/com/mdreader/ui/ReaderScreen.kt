@@ -1,6 +1,5 @@
 package com.mdreader.ui
 
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.compose.ui.unit.sp
 import com.mdreader.data.Chapter
 import com.mdreader.data.ChapterSource
@@ -94,14 +94,15 @@ fun ReaderScreen(
         }
 
         val outcome = withContext(Dispatchers.IO) {
-            runCatching { ChapterSource.read(context, Uri.parse(chapter.uri)) }
-        }
-        outcome.fold(
-            onSuccess = { text ->
-                blocks = MarkdownParser
+            runCatching {
+                val text = ChapterSource.read(context, chapter.uri.toUri())
+                MarkdownParser
                     .parse(text, chapter.isMarkdown)
                     .withoutOpeningTitle(chapter.title)
-            },
+            }
+        }
+        outcome.fold(
+            onSuccess = { parsed -> blocks = parsed },
             onFailure = {
                 blocks = emptyList()
                 loadError = "Couldn't open \"${chapter.name}\". The folder may have moved, " +
@@ -223,7 +224,7 @@ fun ReaderScreen(
                         )
                     }
                     items(blocks) { block ->
-                        BlockView(block)
+                        BlockView(block, imageBaseUri = chapter.uri)
                     }
                 }
             }
