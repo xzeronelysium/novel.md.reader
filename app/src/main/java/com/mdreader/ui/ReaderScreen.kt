@@ -1,7 +1,5 @@
 package com.mdreader.ui
 
-import android.net.Uri
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -37,7 +34,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -74,7 +70,6 @@ fun ReaderScreen(
     onBack: () -> Unit,
     onProgress: (Progress) -> Unit,
 ) {
-    val context = LocalContext.current
     val chapters = project.chapters
     val lastIndex = chapters.lastIndex
 
@@ -99,7 +94,7 @@ fun ReaderScreen(
         }
 
         val outcome = withContext(Dispatchers.IO) {
-            runCatching { ChapterSource.read(context, Uri.parse(chapter.uri)) }
+            runCatching { ChapterSource.read(chapter.uri) }
         }
         outcome.fold(
             onSuccess = { text ->
@@ -145,8 +140,6 @@ fun ReaderScreen(
         onBack()
     }
 
-    BackHandler { saveAndLeave() }
-
     fun goTo(target: Int) {
         val clamped = target.coerceIn(0, lastIndex.coerceAtLeast(0))
         if (clamped == index) return
@@ -159,8 +152,7 @@ fun ReaderScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         ReaderTopBar(
             bookTitle = project.name,
@@ -433,8 +425,7 @@ private fun ReaderFooter(
     val scheme = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
+            .fillMaxWidth(),
     ) {
         Hairline()
         Row(

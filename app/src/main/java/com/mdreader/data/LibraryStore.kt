@@ -1,21 +1,39 @@
 package com.mdreader.data
 
-import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.Properties
 
 /**
  * The whole library lives in one small JSON file. A database would be overkill
  * for a handful of projects, and this keeps the app free of annotation processors.
+ *
+ * On desktop the store lives under the XDG data directory
+ * (~/.local/share/novel-md-reader/library.json) instead of Android's filesDir.
  */
-class LibraryStore(context: Context) {
+class LibraryStore(storageDir: Path) {
 
-    private val file = File(context.filesDir, "library.json")
+    private val dir = storageDir
+    private val file = dir.resolve("library.json")
     private val projects = mutableListOf<Project>()
     private val progressById = mutableMapOf<String, Progress>()
     private var loaded = false
     private var textSizeLevel = 1
+
+    init {
+        Files.createDirectories(dir)
+    }
+
+    /** Default storage location: ~/.local/share/novel-md-reader */
+    companion object {
+        fun defaultDir(): Path {
+            val home = System.getProperty("user.home")
+            return Paths.get(home, ".local/share", "novel-md-reader")
+        }
+    }
 
     @Synchronized
     fun load(): List<Project> {
@@ -37,7 +55,6 @@ class LibraryStore(context: Context) {
             it.id == project.id || it.treeUri == project.treeUri
         }
         if (index >= 0) {
-            // Keep the original id so saved progress still points at this project.
             val previous = projects[index]
             projects[index] = project.copy(id = previous.id, importedAt = previous.importedAt)
         } else {
@@ -87,10 +104,11 @@ class LibraryStore(context: Context) {
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
-        if (!file.exists()) return
+        if (!Files.exists(file)) return
 
         runCatching {
-            val root = JSONObject(file.readText())
+            val text = Files.readString(file)
+            val root = JSONObject(text)
             val projectArray = root.optJSONArray("projects") ?: JSONArray()
             for (i in 0 until projectArray.length()) {
                 val item = projectArray.getJSONObject(i)
@@ -127,7 +145,6 @@ class LibraryStore(context: Context) {
 
             textSizeLevel = root.optInt("textSize", 1).coerceIn(0, 2)
         }.onFailure {
-            // A corrupt file should not brick the app; start with an empty library.
             projects.clear()
             progressById.clear()
         }
@@ -170,11 +187,14 @@ class LibraryStore(context: Context) {
         root.put("progress", progressObject)
         root.put("textSize", textSizeLevel)
 
-        val temp = File(file.parentFile, "${file.name}.tmp")
-        temp.writeText(root.toString())
-        if (!temp.renameTo(file)) {
-            file.writeText(root.toString())
-            temp.delete()
+        val temp = Files.createTempFile(dir, "library", ".json")
+        Files.writeString(temp, root.toString())
+        try {
+            Files.move(temp, file, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: UnsupportedOperationException) {
+            // ATOMIC_MOVE not supported on all filesystems; fall back to a plain move.
+            Files.move(temp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         }
     }
 }

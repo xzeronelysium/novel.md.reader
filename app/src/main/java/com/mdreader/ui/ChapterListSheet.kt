@@ -10,15 +10,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -36,10 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,7 +51,6 @@ fun ChapterListSheet(
     onDismiss: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val keyboard = LocalSoftwareKeyboardController.current
     var query by rememberSaveable { mutableStateOf("") }
     val trimmedQuery = query.trim()
 
@@ -107,7 +100,6 @@ fun ChapterListSheet(
                 query = query,
                 onQueryChange = { query = it },
                 onClear = { query = "" },
-                onSearch = { keyboard?.hide() },
             )
 
             Hairline()
@@ -143,7 +135,7 @@ fun ChapterListSheet(
                 }
             }
 
-            Column(modifier = Modifier.navigationBarsPadding()) {
+            Column(modifier = Modifier) {
                 Hairline()
                 Row(
                     modifier = Modifier
@@ -186,7 +178,6 @@ private fun SearchRow(
     query: String,
     onQueryChange: (String) -> Unit,
     onClear: () -> Unit,
-    onSearch: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(
@@ -204,11 +195,6 @@ private fun SearchRow(
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = scheme.onSurface),
             cursorBrush = SolidColor(scheme.primary),
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None,
-                imeAction = ImeAction.Search,
-            ),
-            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
             modifier = Modifier
                 .weight(1f)
                 .padding(vertical = 10.dp),

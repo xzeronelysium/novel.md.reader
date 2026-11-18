@@ -1,6 +1,5 @@
 pluginManagement {
     repositories {
-        google()
         mavenCentral()
         gradlePluginPortal()
     }
@@ -9,10 +8,10 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
         mavenCentral()
+        google()
     }
 }
 
-rootProject.name = "MDReader"
+rootProject.name = "novel-md-reader"
 include(":app")

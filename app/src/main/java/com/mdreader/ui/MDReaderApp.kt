@@ -1,9 +1,5 @@
 package com.mdreader.ui
 
-import android.content.Context
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -14,21 +10,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.ImportException
 import com.mdreader.data.LibraryStore
 import com.mdreader.data.Project
 import com.mdreader.data.importFolder
+import com.mdreader.data.promptFolder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
 fun MDReaderApp() {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val store = remember { LibraryStore(context.applicationContext) }
+    val store = remember { LibraryStore(LibraryStore.defaultDir()) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     var projects by remember { mutableStateOf<List<Project>>(emptyList()) }
@@ -53,13 +48,12 @@ fun MDReaderApp() {
         }
     }
 
-    val folderPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    fun pickFolder() {
+        val folder = promptFolder()
+        if (folder == null) return
         importing = true
         scope.launch {
-            val result = withContext(Dispatchers.IO) { importFolder(context, uri, store) }
+            val result = withContext(Dispatchers.IO) { importFolder(folder, store) }
             projects = withContext(Dispatchers.IO) { store.load() }
             importing = false
             result.fold(
@@ -78,12 +72,12 @@ fun MDReaderApp() {
             loading = loading,
             importing = importing,
             snackbarHostState = snackbarHostState,
-            onImport = { folderPicker.launch(null) },
+            onImport = { pickFolder() },
             onOpen = { openProjectId = it.id },
             onRefresh = { project ->
                 scope.launch {
                     val result = withContext(Dispatchers.IO) {
-                        refreshProject(context, project, store)
+                        refreshProject(project, store)
                     }
                     reloadLibrary()
                     result.fold(
@@ -122,16 +116,15 @@ fun MDReaderApp() {
  * The saved reading position is preserved because the project id is kept.
  */
 private fun refreshProject(
-    context: Context,
     project: Project,
     store: LibraryStore,
 ): Result<Project> = runCatching {
-    val treeUri = Uri.parse(project.treeUri)
-    if (!ChapterSource.hasPermission(context, treeUri)) {
+    val folder = java.nio.file.Paths.get(project.treeUri)
+    if (!ChapterSource.hasPermission(folder)) {
         throw ImportException("The folder is no longer accessible. Import it again.")
     }
 
-    val chapters = ChapterSource.listChapters(context, treeUri)
+    val chapters = ChapterSource.listChapters(folder)
     if (chapters.isEmpty()) {
         throw ImportException("No .md or .txt files are left in that folder.")
     }
