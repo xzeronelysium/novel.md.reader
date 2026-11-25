@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -46,6 +48,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mdreader.data.comics.ComicHit
@@ -262,7 +265,7 @@ fun AddNovelDock(
         if (state != DockState.Idle) Hairline()
 
         if (active || query.isNotEmpty() || state != DockState.Idle) {
-            SourceRow(scope = scope, onScope = { scope = it; query = query })
+            SourceRow(scope = scope, onScope = { scope = it })
             Hairline(modifier = Modifier.padding(horizontal = ScreenPad))
         }
 
@@ -309,7 +312,7 @@ fun AddNovelDock(
     }
 }
 
-/** Three small segments, the same shape as the shelf's sort row. */
+/** Three segments picking the site to search, the same shape as the shelf's sort row. */
 @Composable
 private fun SourceRow(scope: DockSource, onScope: (DockSource) -> Unit) {
     val scheme = MaterialTheme.colorScheme
@@ -319,14 +322,15 @@ private fun SourceRow(scope: DockSource, onScope: (DockSource) -> Unit) {
             .padding(horizontal = ScreenPad, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(modifier = Modifier.heightIn(min = 28.dp).border(1.dp, scheme.outline)) {
+        Row(modifier = Modifier.height(32.dp).border(1.dp, scheme.onSurface)) {
             DockSource.entries.forEach { option ->
                 val on = option == scope
                 Box(
                     modifier = Modifier
+                        .fillMaxHeight()
                         .background(if (on) scheme.onSurface else Color.Transparent)
                         .clickable { onScope(option) }
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .padding(horizontal = 10.dp)
                         .semantics {
                             contentDescription = "Search ${option.label.lowercase()}"
                             role = Role.RadioButton
@@ -338,6 +342,7 @@ private fun SourceRow(scope: DockSource, onScope: (DockSource) -> Unit) {
                         text = option.label,
                         style = MaterialTheme.typography.labelSmall,
                         color = if (on) scheme.background else scheme.onSurfaceVariant,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
                     )
                 }
             }
