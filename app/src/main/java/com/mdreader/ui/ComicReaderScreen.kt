@@ -722,7 +722,8 @@ private fun ComicZoomOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(ComicSkin.PageStage),
+                .background(ComicSkin.PageStage)
+                .statusBarsPadding(),
         ) {
             HorizontalPager(
                 state = pagerState,
