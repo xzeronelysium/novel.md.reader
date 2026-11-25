@@ -36,6 +36,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -294,7 +299,7 @@ private fun ChapterRow(
     }
 }
 
-/** S / M / L reader text size. Flat text buttons; the active level is vermilion. */
+/** S / M / L reader text size. Each letter is a 48dp target; the active one is vermilion. */
 @Composable
 private fun TextSizeToggle(
     level: Int,
@@ -302,17 +307,27 @@ private fun TextSizeToggle(
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.CenterVertically) {
-        listOf("S", "M", "L").forEachIndexed { levelIndex, label ->
-            val selected = levelIndex == level.coerceIn(0, 2)
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (selected) scheme.primary else scheme.onSurfaceVariant,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+        listOf("S" to "small", "M" to "medium", "L" to "large").forEachIndexed { levelIndex, (label, name) ->
+            val on = levelIndex == level.coerceIn(0, 2)
+            Box(
                 modifier = Modifier
+                    .height(48.dp)
                     .clickable { onChange(levelIndex) }
-                    .padding(horizontal = 11.dp, vertical = 9.dp),
-            )
+                    .padding(horizontal = 12.dp)
+                    .semantics {
+                        role = Role.RadioButton
+                        selected = on
+                        contentDescription = "Text size $name"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (on) scheme.primary else scheme.onSurfaceVariant,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                )
+            }
         }
     }
 }

@@ -1,10 +1,12 @@
 package com.mdreader.ui
 
-import android.net.Uri
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.LruCache
+import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,7 +27,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +49,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -57,23 +64,17 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mdreader.data.BatchRewrite
 import com.mdreader.data.Chapter
-import com.mdreader.data.ChapterRewriter
-import com.mdreader.data.WikiEntry
-import com.mdreader.data.WikiIndex
 import com.mdreader.data.ChapterSource
 import com.mdreader.data.Progress
-import com.mdreader.data.RewriteStore
 import com.mdreader.data.Project
-import com.mdreader.data.number
 import com.mdreader.data.Vault
 import com.mdreader.data.online.FreeWebNovelClient
 import com.mdreader.data.online.OnlineException
 import com.mdreader.data.remapTo
 import com.mdreader.md.Block
 import com.mdreader.md.MarkdownParser
-import com.mdreader.md.MarkdownWriter
+import com.mdreader.md.charCount
 import com.mdreader.md.withoutOpeningTitle
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -111,41 +112,13 @@ fun ReaderScreen(
     var loading by remember(project.id) { mutableStateOf(true) }
     var loadError by remember(project.id) { mutableStateOf<String?>(null) }
     var showChapters by remember { mutableStateOf(false) }
-    var showWiki by remember { mutableStateOf(false) }
-    var wikiEntry by remember { mutableStateOf<WikiEntry?>(null) }
-    var wikiIndex by remember { mutableStateOf(WikiIndex(emptyList())) }
-    val wikiLinks = remember(wikiIndex) { WikiLinks(wikiIndex) { wikiEntry = it; showWiki = true } }
-    val rewrites = remember { RewriteStore.of(context.applicationContext) }
     val scope = rememberCoroutineScope()
-    // The saved rewrite of the open chapter, and whether it is the one on screen.
-    var rewriteBlocks by remember(project.id) { mutableStateOf<List<Block>?>(null) }
-    // Fingerprint of the text the saved rewrite was made from, and whether the chapter has moved on.
-    var rewriteSourceHash by remember(project.id) { mutableStateOf<String?>(null) }
-    var rewriteStale by remember(project.id) { mutableStateOf(false) }
-    var showRewrite by remember(project.id) { mutableStateOf(false) }
-    // Which tab the reader chose last. It follows them from chapter to chapter: a chapter with a
-    // rewrite opens in the rewrite while this is on, one without opens as the original and leaves it on.
-    var preferRewrite by rememberSaveable(project.id) { mutableStateOf(startProgress?.rewritten == true) }
-    var rewriting by remember(project.id) { mutableStateOf(false) }
-    var rewriteError by remember(project.id) { mutableStateOf<String?>(null) }
-    var rewriteChars by remember(project.id) { mutableIntStateOf(0) }
-    var rewriteStatus by remember(project.id) { mutableStateOf<String?>(null) }
-    var rewriteJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    var learning by remember(project.id) { mutableStateOf(false) }
-    var learnJob by remember(project.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    var learnStatus by remember(project.id) { mutableStateOf<String?>(null) }
-    var showRewriteSettings by remember { mutableStateOf(false) }
-    // Filled on IO when the settings sheet opens, never during composition.
-    var settingsSnapshot by remember(project.id) { mutableStateOf(SettingsSnapshot()) }
     var pendingRestore by remember(project.id) { mutableStateOf(startProgress) }
-    // Each tab keeps its own place in the open chapter: (first visible item, its offset).
-    var originalPos by remember(project.id) { mutableStateOf(0 to 0) }
-    var rewritePos by remember(project.id) { mutableStateOf(0 to 0) }
-    // Set once the open chapter's saved rewrite has been looked up, so restoring can pick the tab.
-    var rewriteChecked by remember(project.id) { mutableStateOf(false) }
     var attempt by remember(project.id) { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
-    val chapterPercent by remember(listState) {
+    // A State, not a delegated value: the rail reads it while drawing, so scrolling a chapter
+    // never recomposes the footer and the top bar.
+    val chapterPercent = remember(listState) {
         derivedStateOf {
             val layout = listState.layoutInfo
             val first = layout.visibleItemsInfo.firstOrNull()
@@ -165,8 +138,23 @@ fun ReaderScreen(
         }
     }
 
+    // New text fades in rather than snapping under the eye; declared here because the reading
+    // column only exists once a chapter has loaded.
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (loading) 0f else 1f,
+        animationSpec = tween(durationMillis = 180),
+        label = "chapter",
+    )
+
     // Parsed chapters kept warm: returning to one, or turning to a prefetched one, is instant.
-    val chapterCache = remember(project.id) { LruCache<String, List<Block>>(6) }
+    // Bounded by the characters held rather than by a count, so six very long chapters cannot
+    // quietly hold tens of megabytes.
+    val chapterCache = remember(project.id) {
+        object : LruCache<String, List<Block>>(CHAPTER_CACHE_CHARS) {
+            override fun sizeOf(key: String, value: List<Block>): Int =
+                value.sumOf { it.charCount() }.coerceAtLeast(1)
+        }
+    }
     // One read per chapter even when a prefetch and the reader ask for it at the same moment.
     val inFlight = remember(project.id) { ConcurrentHashMap<String, Deferred<Result<List<Block>>>>() }
 
@@ -188,7 +176,7 @@ fun ReaderScreen(
         } else {
             Result.success(
                 withContext(Dispatchers.IO) {
-                    val text = ChapterSource.read(context, Uri.parse(chapter.uri))
+                    val text = ChapterSource.read(context, chapter.uri.toUri())
                     MarkdownParser.parse(text, chapter.isMarkdown).withoutOpeningTitle(chapter.title)
                 },
             )
@@ -246,7 +234,9 @@ fun ReaderScreen(
         if (outcome.isSuccess) {
             delay(700)
             val next = chapters.getOrNull(index + 1)
-            if (next != null && chapterCache.get(next.uri) == null) {
+            // A chapter the reader has not asked for yet is not worth mobile data.
+            val nextIsWorthFetching = next != null && (!next.remote || !metered(context))
+            if (next != null && nextIsWorthFetching && chapterCache.get(next.uri) == null) {
                 readOnce(next).getOrNull()?.let { chapterCache.put(next.uri, it) }
             }
             val previous = chapters.getOrNull(index - 1)
@@ -258,158 +248,34 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(project.id, index) {
-        showRewrite = false
-        rewriteChecked = false
-        originalPos = 0 to 0
-        rewritePos = 0 to 0
-        rewriteError = null
-        val chapter = chapters.getOrNull(index)
-        val saved = chapter?.let {
-            withContext(Dispatchers.IO) { runCatching { rewrites.read(project, it) }.getOrNull() }
-        }
-        rewriteBlocks = saved?.let {
-            runCatching {
-                MarkdownParser.parse(it.chapter, markdown = true).withoutOpeningTitle(chapter!!.title)
-            }.getOrNull()
-        }
-        rewriteSourceHash = saved?.sourceHash
-        // A place restored from the last visit decides its own tab; every other chapter follows the preference.
-        if (pendingRestore?.chapterIndex != index) showRewrite = preferRewrite && rewriteBlocks != null
-        rewriteChecked = true
-    }
-
-    // A rewrite made from an older version of the chapter is still usable, but the reader is told.
-    LaunchedEffect(project.id, index, blocks, rewriteBlocks, rewriteSourceHash) {
-        val savedHash = rewriteSourceHash
-        if (savedHash == null || blocks.isEmpty()) {
-            rewriteStale = false
-            return@LaunchedEffect
-        }
-        val current = withContext(Dispatchers.IO) { RewriteStore.sourceHash(MarkdownWriter.write(blocks)) }
-        rewriteStale = current != savedHash
-    }
-
-    fun startRewrite() {
-        val chapter = chapters.getOrNull(index) ?: return
-        val settings = rewrites.settings()
-        if (!settings.ready) {
-            showRewriteSettings = true
-            return
-        }
-        val source = blocks
-        if (source.isEmpty() || rewriting) return
-        if (BatchRewrite.state.value.running) {
-            rewriteError = "Chapters are being rewritten ahead. Stop that in the rewrite settings first."
-            return
-        }
-        learnJob?.cancel()
-        rewriting = true
-        rewriteError = null
-        rewriteChars = 0
-        rewriteJob = scope.launch {
-            try {
-                val result = ChapterRewriter.rewrite(
-                    context, project, chapters, index, settings, rewrites, vault, source,
-                    onStatus = { rewriteStatus = it }, onProgress = { rewriteChars = it },
-                )
-                val parsed = MarkdownParser.parse(result.chapter, markdown = true).withoutOpeningTitle(chapter.title)
-                // The reader may have moved on while the answer was coming back.
-                if (chapters.getOrNull(index) == chapter) {
-                    if (!showRewrite) originalPos = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-                    rewriteBlocks = parsed
-                    rewriteSourceHash = withContext(Dispatchers.IO) { RewriteStore.sourceHash(MarkdownWriter.write(source)) }
-                    rewriteStale = false
-                    showRewrite = true
-                    preferRewrite = true
-                    // A fresh rewrite is read from its start.
-                    rewritePos = 0 to 0
-                    listState.scrollToItem(0)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                rewriteError = e.message ?: e.javaClass.simpleName
-            } finally {
-                rewriting = false
-                rewriteStatus = null
-                rewriteJob = null
-            }
-        }
-    }
-
-    // Wiki as you read: an opened chapter is read into the wiki in the background, rewritten or not.
-    // Waits for the chapter to load and stays out of the way of a rewrite or a batch; a failure is
-    // quiet, the chapter is simply tried again the next time it is opened.
-    // The read-ahead runs on its own job, so turning the page does not cut it off.
-    LaunchedEffect(project.id, index, loading, rewriting, blocks.isNotEmpty()) {
-        val settings = withContext(Dispatchers.IO) { rewrites.settings() }
-        if (!settings.autoWiki || !settings.ready || loading || rewriting || blocks.isEmpty()) return@LaunchedEffect
-        if (learnJob?.isActive == true || BatchRewrite.state.value.running) return@LaunchedEffect
-        val upTo = ChapterRewriter.wikiTarget(rewrites, project, chapters, index) ?: return@LaunchedEffect
-        learning = true
-        learnJob = scope.launch {
-            try {
-                ChapterRewriter.learn(context, project, chapters, index, upTo, settings, rewrites, vault) { learnStatus = it }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.w("MDReader", "wiki read failed near ${chapters.getOrNull(index)?.uri}", e)
-            } finally {
-                learning = false
-                learnStatus = null
-            }
-        }
-    }
-
     // Restore the saved scroll position once per visit, otherwise start at the top.
-    // Waits for the rewrite lookup too, so a chapter last read in the rewrite reopens there.
-    LaunchedEffect(blocks, rewriteChecked) {
-        if (blocks.isEmpty() || !rewriteChecked) return@LaunchedEffect
+    LaunchedEffect(blocks) {
+        if (blocks.isEmpty()) return@LaunchedEffect
         val restore = pendingRestore
         if (restore != null && restore.chapterIndex == index) {
             pendingRestore = null
-            originalPos = restore.scrollIndex to restore.scrollOffset
-            val rewritten = rewriteBlocks
-            if (rewritten != null) rewritePos = restore.rewriteIndex to restore.rewriteOffset
-            showRewrite = restore.rewritten && rewritten != null
-            val (item, offset) = if (showRewrite) rewritePos else originalPos
-            val last = (if (showRewrite) rewritten!! else blocks).lastIndex
-            listState.scrollToItem(item.coerceIn(0, last.coerceAtLeast(0)), offset.coerceAtLeast(0))
+            val last = blocks.lastIndex
+            listState.scrollToItem(restore.scrollIndex.coerceIn(0, last.coerceAtLeast(0)), restore.scrollOffset.coerceAtLeast(0))
         } else {
             listState.scrollToItem(0)
         }
     }
 
-    /** The open chapter's place in both tabs, the one on screen read live from the list. */
+    /** The open chapter's place, read live from the list. */
     fun currentProgress(): Progress {
-        val here = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-        val original = if (showRewrite) originalPos else here
-        val rewrite = if (showRewrite) here else rewritePos
         return Progress(
-            index, original.first, original.second, chapters.getOrNull(index)?.uri,
-            rewritten = showRewrite, rewriteIndex = rewrite.first, rewriteOffset = rewrite.second,
+            index, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset,
+            chapters.getOrNull(index)?.uri,
         )
     }
 
-    /** Switches tab, remembering where this one was left and returning to where the other was. */
-    fun switchTab(toRewrite: Boolean) {
-        preferRewrite = toRewrite
-        if (showRewrite == toRewrite) return
-        val here = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-        if (showRewrite) rewritePos = here else originalPos = here
-        showRewrite = toRewrite
-        val (item, offset) = if (toRewrite) rewritePos else originalPos
-        scope.launch { listState.scrollToItem(item, offset) }
-    }
-
     LaunchedEffect(project.id, index) {
-        snapshotFlow { Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, showRewrite) }
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
             .debounce(500)
             .collect {
                 // Ignore positions from the previous chapter while the new one loads, and before
                 // the saved place has been restored (it would overwrite it with the top).
-                if (!loading && rewriteChecked && pendingRestore?.chapterIndex != index) onProgress(currentProgress())
+                if (!loading && pendingRestore?.chapterIndex != index) onProgress(currentProgress())
             }
     }
 
@@ -439,64 +305,23 @@ fun ReaderScreen(
             bookTitle = project.name,
             onBack = { saveAndLeave() },
             onIndex = { showChapters = true },
-            onWiki = { wikiEntry = null; showWiki = true },
-            wikiEnabled = !wikiIndex.isEmpty(),
             indexEnabled = chapters.isNotEmpty(),
         )
-        RewriteTabs(
-            chapterNumber = index + 1,
-            chapterPercent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent else null,
-            showRewrite = showRewrite,
-            hasRewrite = rewriteBlocks != null,
-            stale = rewriteStale,
-            rewriting = rewriting,
-            words = rewriteChars / 6,
-            status = rewriteStatus,
-            canStart = !loading && loadError == null && blocks.isNotEmpty(),
-            onOriginal = {
-                // Back to the original also puts away a failed rewrite's message.
-                rewriteError = null
-                switchTab(toRewrite = false)
+        ChapterRail(
+            percent = {
+                if (loading || loadError != null || blocks.isEmpty()) 0 else chapterPercent.value ?: 0
             },
-            onRewritten = {
-                when {
-                    rewriting -> Unit
-                    rewriteBlocks != null -> switchTab(toRewrite = true)
-                    else -> startRewrite()
-                }
-            },
-            onStop = { rewriteJob?.cancel() },
-            onRewriteAgain = { startRewrite() },
-            onSettings = { showRewriteSettings = true },
         )
-        if (learning) {
-            // "SHEETS 3/10" while chapters are read, "DOWNLOAD 2/5" before that.
-            Text(
-                text = "WIKI  " + (learnStatus?.substringAfter(' ') ?: "…") +
-                    (learnStatus?.takeIf { it.startsWith("DOWNLOAD") }?.let { "  downloading" } ?: ""),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
-            )
-        }
-        ChapterRail(percent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent ?: 0 else 0)
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
+            contentAlignment = Alignment.TopCenter,
         ) {
             val message = loadError
             val chapter = chapters.getOrNull(index)
             when {
-                rewriteError != null -> ReaderMessage(
-                    label = "Rewrite",
-                    title = "The rewrite failed",
-                    body = rewriteError.orEmpty(),
-                    actionLabel = "Try again",
-                    onAction = { startRewrite() },
-                )
-
                 message != null -> ReaderMessage(
                     label = "Error",
                     title = "Couldn't open this chapter",
@@ -542,7 +367,13 @@ fun ReaderScreen(
                     ) {
                         LazyColumn(
                             state = listState,
-                            modifier = Modifier.fillMaxSize(),
+                            // A phone fills the width; a tablet keeps a readable measure (~66
+                            // characters) instead of stretching every line across the screen.
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .widthIn(max = 640.dp)
+                                .fillMaxWidth()
+                                .graphicsLayer { alpha = contentAlpha },
                             contentPadding = PaddingValues(
                                 start = ScreenPad,
                                 end = ScreenPad,
@@ -557,8 +388,8 @@ fun ReaderScreen(
                                     total = total,
                                 )
                             }
-                            items(if (showRewrite) rewriteBlocks ?: blocks else blocks) { block ->
-                                CompositionLocalProvider(LocalWiki provides wikiLinks) { BlockView(block) }
+                            items(blocks) { block ->
+                                BlockView(block)
                             }
                         }
                     }
@@ -570,61 +401,10 @@ fun ReaderScreen(
             ReaderFooter(
                 index = index,
                 total = total,
-                chapterPercent = if (!loading && loadError == null && blocks.isNotEmpty()) chapterPercent else null,
                 onPrevious = { goTo(index - 1) },
                 onNext = { goTo(index + 1) },
             )
         }
-    }
-
-    val wikiChapter = chapters.getOrNull(index)?.number(index) ?: (index + 1)
-    LaunchedEffect(project.id, wikiChapter, rewriting, learning) {
-        wikiIndex = withContext(Dispatchers.IO) { rewrites.bible(project).index(wikiChapter) }
-    }
-    if (showWiki) {
-        WikiSheet(
-            bible = remember(project.id) { rewrites.bible(project) },
-            index = wikiIndex,
-            upTo = wikiChapter,
-            start = wikiEntry,
-            onDismiss = { showWiki = false },
-        )
-    }
-
-    LaunchedEffect(showRewriteSettings, project.id, index, rewriting) {
-        if (!showRewriteSettings) return@LaunchedEffect
-        settingsSnapshot = withContext(Dispatchers.IO) {
-            val built = rewrites.bible(project).built()
-            SettingsSnapshot(
-                memoryChapters = built.size,
-                earlierRead = chapters.take(index).map { it.uri in built },
-                rewritten = rewrites.rewrittenPositions(project, chapters),
-            )
-        }
-    }
-
-    if (showRewriteSettings) {
-        RewriteSettingsScreen(
-            initial = remember { rewrites.settings() },
-            memoryChapters = settingsSnapshot.memoryChapters,
-            earlierRead = settingsSnapshot.earlierRead,
-            // Sealing the key is Keystore work: keep it off the main thread.
-            onChange = { next -> scope.launch(Dispatchers.IO) { rewrites.saveSettings(next) } },
-            onRebuildMemory = {
-                rewrites.bible(project).clear()
-                settingsSnapshot = SettingsSnapshot()
-            },
-            onBack = { showRewriteSettings = false },
-            ahead = AheadSetup(
-                projectId = project.id,
-                chapterLabels = remember(project.id, chapters.size) { chapters.mapIndexed { i, c -> "Chapter ${c.number(i)} · ${c.title}" } },
-                currentIndex = index,
-                rewritten = settingsSnapshot.rewritten,
-                busy = rewriting,
-            ),
-            onStartAhead = { queue -> com.mdreader.data.RewriteBatchService.start(context, project.id, queue) },
-            onStopAhead = { com.mdreader.data.RewriteBatchService.stop(context) },
-        )
     }
 
     if (showChapters) {
@@ -642,6 +422,17 @@ fun ReaderScreen(
     }
 }
 
+/** Roughly how many parsed characters stay cached (about 3 MB of text plus block objects). */
+private const val CHAPTER_CACHE_CHARS = 1_500_000
+
+/** True when the active connection is metered, so a prefetch the reader didn't ask for is skipped. */
+private fun metered(context: Context): Boolean {
+    val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
+    val network = manager.activeNetwork ?: return false
+    val capabilities = manager.getNetworkCapabilities(network) ?: return false
+    return !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+}
+
 /**
  * Back, the book's title and INDEX. Touch areas are 48dp; the visible title sits on the text's
  * 28dp margin, so the bar lines up with everything under it.
@@ -652,8 +443,6 @@ private fun ReaderTopBar(
     onBack: () -> Unit,
     onIndex: () -> Unit,
     indexEnabled: Boolean,
-    onWiki: () -> Unit,
-    wikiEnabled: Boolean,
 ) {
     Row(
         modifier = Modifier
@@ -685,27 +474,6 @@ private fun ReaderTopBar(
         Box(
             modifier = Modifier
                 .height(48.dp)
-                .clickable(enabled = wikiEnabled, onClick = onWiki)
-                .padding(horizontal = 12.dp)
-                .semantics {
-                    contentDescription = "Open the novel's wiki"
-                    role = Role.Button
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "WIKI",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (wikiEnabled) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                },
-            )
-        }
-        Box(
-            modifier = Modifier
-                .height(48.dp)
                 .clickable(enabled = indexEnabled, onClick = onIndex)
                 .padding(horizontal = 12.dp)
                 .semantics {
@@ -729,22 +497,18 @@ private fun ReaderTopBar(
 
 /** How far through this chapter the reader is: a 2dp line where the text begins. */
 @Composable
-private fun ChapterRail(percent: Int) {
-    Box(
+private fun ChapterRail(percent: () -> Int) {
+    LinearProgressIndicator(
+        progress = { percent().coerceIn(0, 100) / 100f },
         modifier = Modifier
             .fillMaxWidth()
-            .height(2.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        if (percent > 0) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(percent.coerceIn(0, 100) / 100f)
-                    .height(2.dp)
-                    .background(MaterialTheme.colorScheme.primary),
-            )
-        }
-    }
+            .height(2.dp),
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = MaterialTheme.colorScheme.outlineVariant,
+        strokeCap = StrokeCap.Butt,
+        gapSize = 0.dp,
+        drawStopIndicator = {},
+    )
 }
 
 @Composable
@@ -819,7 +583,6 @@ private fun Ornament() {
 private fun ReaderFooter(
     index: Int,
     total: Int,
-    chapterPercent: Int?,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
 ) {
@@ -852,8 +615,7 @@ private fun ReaderFooter(
                 },
                 style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
                 modifier = Modifier.semantics {
-                    contentDescription = "Chapter ${index + 1} of $total" +
-                        (chapterPercent?.let { ", $it percent read" } ?: "")
+                    contentDescription = "Chapter ${index + 1} of $total"
                 },
             )
             Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
@@ -944,156 +706,3 @@ private fun ReaderMessage(
     }
 }
 
-/**
- * ORIGINAL | REWRITTEN as one square segmented control with the settings gear beside it, then a
- * line with the chapter's place on the left and the rewrite's action on the right. Everything
- * visible sits on the text's 28dp margin.
- */
-@Composable
-private fun RewriteTabs(
-    chapterNumber: Int,
-    chapterPercent: Int?,
-    showRewrite: Boolean,
-    hasRewrite: Boolean,
-    stale: Boolean,
-    rewriting: Boolean,
-    words: Int,
-    status: String?,
-    canStart: Boolean,
-    onOriginal: () -> Unit,
-    onRewritten: () -> Unit,
-    onStop: () -> Unit,
-    onRewriteAgain: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    val scheme = MaterialTheme.colorScheme
-    // Replacing a saved rewrite takes a second tap; the ask resets when the view changes.
-    var confirmAgain by remember(showRewrite, hasRewrite, rewriting) { mutableStateOf(false) }
-    @Composable
-    fun Segment(label: String, selected: Boolean, accent: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
-        Box(
-            modifier = modifier
-                .fillMaxHeight()
-                .background(if (selected) scheme.onSurface else androidx.compose.ui.graphics.Color.Transparent)
-                .clickable(enabled = enabled, onClick = onClick)
-                .semantics { role = Role.Tab },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = when {
-                    selected -> scheme.background
-                    !enabled -> scheme.onSurfaceVariant.copy(alpha = 0.4f)
-                    accent -> scheme.primary
-                    else -> scheme.onSurfaceVariant
-                },
-            )
-        }
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = ScreenPad, end = ScreenPad, top = 4.dp)
-            .height(36.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(Modifier.weight(1f).fillMaxHeight().border(1.dp, scheme.outline)) {
-            Segment("ORIGINAL", !showRewrite, false, true, Modifier.weight(1f), onOriginal)
-            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
-            Segment(
-                label = when {
-                    rewriting -> "● ${words}w"
-                    hasRewrite -> "REWRITTEN"
-                    else -> "✦ REWRITE"
-                },
-                selected = showRewrite && hasRewrite,
-                accent = rewriting || !hasRewrite,
-                enabled = rewriting || hasRewrite || canStart,
-                modifier = Modifier.weight(1f),
-                onClick = onRewritten,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .border(1.dp, scheme.outline)
-                .clickable(onClick = onSettings)
-                .semantics {
-                    contentDescription = "Rewrite settings"
-                    role = Role.Button
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("⚙", style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
-        }
-    }
-    val place = "CH. %,d".format(chapterNumber) + (chapterPercent?.let { " · $it%" } ?: "")
-    val (left, action, onAction) = when {
-        rewriting -> Triple(
-            listOfNotNull(status, words.takeIf { it > 0 }?.let { "$it words" }).joinToString(" · ")
-                .ifEmpty { "Starting the rewrite. You can keep reading." },
-            "STOP",
-            onStop,
-        )
-        showRewrite && hasRewrite -> Triple(
-            when {
-                confirmAgain -> "Replace this rewrite?"
-                stale -> "$place · source changed"
-                else -> place
-            },
-            if (confirmAgain) "TAP AGAIN TO REPLACE" else "REWRITE AGAIN",
-            {
-                if (confirmAgain) {
-                    confirmAgain = false
-                    onRewriteAgain()
-                } else {
-                    confirmAgain = true
-                }
-            },
-        )
-        else -> Triple(if (stale && hasRewrite) "$place · source changed" else place, null, {})
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = ScreenPad)
-            .height(32.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = left,
-            style = MaterialTheme.typography.labelSmall,
-            color = scheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (action != null) {
-            val enabled = rewriting || canStart
-            Box(
-                Modifier
-                    .height(32.dp)
-                    .clickable(enabled = enabled, onClick = onAction)
-                    .padding(start = 12.dp)
-                    .semantics { role = Role.Button },
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Text(
-                    text = action,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Medium,
-                    color = if (enabled) scheme.primary else scheme.onSurfaceVariant.copy(alpha = 0.4f),
-                )
-            }
-        }
-    }
-}
-
-/** What the rewrite settings sheet needs from disk, read once when it opens. */
-private data class SettingsSnapshot(
-    val memoryChapters: Int = 0,
-    val earlierRead: List<Boolean> = emptyList(),
-    val rewritten: Set<Int> = emptySet(),
-)

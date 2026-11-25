@@ -10,6 +10,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
 import java.net.UnknownHostException
+import java.util.zip.GZIPInputStream
 
 data class OnlineNovel(val details: NovelDetails, val chapters: List<ChapterRef>)
 
@@ -22,7 +23,7 @@ object FreeWebNovelClient {
 
     private const val USER_AGENT = "novel.md.reader/1.1 (Android)"
     private const val TIMEOUT_MS = 15_000
-    private const val MAX_BODY_CHARS = 4_000_000
+    private const val MAX_BODY_BYTES = 4_000_000
     private const val MAX_COVER_BYTES = 3_000_000
     private const val LIST_PACE_MS = 300L
     private val RATE_LIMIT_BACKOFF_MS = listOf(2_000L, 5_000L, 12_000L)
@@ -180,6 +181,9 @@ object FreeWebNovelClient {
                 connection.instanceFollowRedirects = true
                 connection.setRequestProperty("User-Agent", USER_AGENT)
                 connection.setRequestProperty("Accept-Language", "en")
+                // Setting it ourselves keeps the header honest: the platform would otherwise ask
+                // for gzip and decompress it behind our back, with no size limit on the result.
+                connection.setRequestProperty("Accept-Encoding", "gzip")
                 if (ajax) connection.setRequestProperty("X-Requested-With", "XMLHttpRequest")
 
                 val code = connection.responseCode
@@ -192,10 +196,12 @@ object FreeWebNovelClient {
                     code == 404 -> throw OnlineException("That page no longer exists on the site.")
                     code !in 200..299 -> throw OnlineException("The site returned an error ($code).")
                 }
-                connection.inputStream.bufferedReader().use { reader ->
-                    val text = reader.readText()
-                    if (text.length > MAX_BODY_CHARS) throw OnlineException("The response was unexpectedly large.")
-                    text
+                connection.inputStream.use { raw ->
+                    val encoding = connection.contentEncoding?.lowercase().orEmpty()
+                    val body = if (encoding.contains("gzip")) GZIPInputStream(raw) else raw
+                    // Read from the (possibly decompressed) stream, capped as it arrives, so a
+                    // compressed response can never expand into an unbounded buffer.
+                    readCapped(body, MAX_BODY_BYTES).toString(Charsets.UTF_8)
                 }
             } catch (e: OnlineException) {
                 throw e
@@ -209,4 +215,19 @@ object FreeWebNovelClient {
                 connection.disconnect()
             }
         }
+
+    /** Reads [input] to the end, failing as soon as it grows past [maxBytes]. */
+    private fun readCapped(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            out.write(buffer, 0, read)
+            if (out.size() > maxBytes) {
+                throw OnlineException("The response was unexpectedly large.")
+            }
+        }
+        return out.toByteArray()
+    }
 }

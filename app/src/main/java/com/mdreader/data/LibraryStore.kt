@@ -148,9 +148,6 @@ class LibraryStore(private val filesDir: File) {
                     scrollOffset = value.optInt("scrollOffset", 0),
                     chapterKey = value.optString("chapterKey").ifEmpty { null },
                     updatedAt = value.optLong("updatedAt", 0L),
-                    rewritten = value.optBoolean("rewritten", false),
-                    rewriteIndex = value.optInt("rewriteIndex", 0),
-                    rewriteOffset = value.optInt("rewriteOffset", 0),
                 )
             }
         }
@@ -192,6 +189,8 @@ class LibraryStore(private val filesDir: File) {
             rating = item.optString("rating"),
             votes = item.optInt("votes", 0),
             summaryAt = item.optLong("summaryAt", 0L),
+            kind = if (item.optString("kind") == "comic") ProjectKind.COMIC else ProjectKind.NOVEL,
+            sourceId = item.optString("sourceId").ifEmpty { null },
         )
     }
 
@@ -228,6 +227,8 @@ class LibraryStore(private val filesDir: File) {
                     .apply { if (project.rating.isNotEmpty()) put("rating", project.rating) }
                     .apply { if (project.votes > 0) put("votes", project.votes) }
                     .apply { if (project.summaryAt > 0) put("summaryAt", project.summaryAt) }
+                    .apply { if (project.kind == ProjectKind.COMIC) put("kind", "comic") }
+                    .apply { project.sourceId?.let { put("sourceId", it) } }
                     .put("chapters", chaptersArray)
             )
         }
@@ -246,9 +247,6 @@ class LibraryStore(private val filesDir: File) {
                     .put("scrollOffset", progress.scrollOffset)
                     .apply { progress.chapterKey?.let { put("chapterKey", it) } }
                     .put("updatedAt", progress.updatedAt)
-                    .put("rewritten", progress.rewritten)
-                    .put("rewriteIndex", progress.rewriteIndex)
-                    .put("rewriteOffset", progress.rewriteOffset)
             )
         }
         writeAtomically(

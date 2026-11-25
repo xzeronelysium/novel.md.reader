@@ -27,9 +27,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
@@ -56,6 +59,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.mdreader.data.Project
+import com.mdreader.data.comics.ComicHit
+import com.mdreader.data.comics.ComicSource
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -106,6 +111,7 @@ fun LibraryScreen(
     downloadedCount: (Project) -> Int,
     onImport: () -> Unit,
     onOpenHit: (NovelHit) -> Unit,
+    onOpenComic: (ComicSource, ComicHit) -> Unit,
     onOpen: (Project) -> Unit,
     onRefresh: (Project) -> Unit,
     onRemove: (Project) -> Unit,
@@ -223,15 +229,15 @@ fun LibraryScreen(
                         },
                     ) {
                         // The list slides down to make room for the strip; the frozen part never moves.
-                        val stripShown = if (check.refreshing || check.result != null) {
-                            1f
-                        } else {
-                            pullState.distanceFraction.coerceIn(0f, 1f)
-                        }
+                        // The drag distance is read inside the layer block, so a pull redraws the
+                        // list instead of recomposing it on every pixel of movement.
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { translationY = stripShown * 44.dp.toPx() },
+                                .graphicsLayer {
+                                    val shown = if (check.refreshing || check.result != null) 1f else pullState.distanceFraction.coerceIn(0f, 1f)
+                                    translationY = shown * 44.dp.toPx()
+                                },
                             contentPadding = PaddingValues(start = ScreenPad, end = ScreenPad, bottom = dockClearance),
                         ) {
                             if (shown.isEmpty()) {
@@ -283,6 +289,7 @@ fun LibraryScreen(
             active = searchActive,
             onActiveChange = { searchActive = it },
             onOpenHit = onOpenHit,
+            onOpenComic = onOpenComic,
             onImportFolder = onImport,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
@@ -338,7 +345,7 @@ private fun LibraryHeader(novelCount: Int) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            Micro(text = "${novelCount.toString().padStart(2, '0')} novels")
+            Micro(text = "${novelCount.toString().padStart(2, '0')} titles")
         }
 
         Spacer(Modifier.height(32.dp))
@@ -381,9 +388,8 @@ private fun ShelfBar(
                     .height(48.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(modifier = Modifier.size(40.dp).offset(x = (-13).dp), contentAlignment = Alignment.Center) {
-                    SearchGlyph()
-                }
+                SearchGlyph()
+                Spacer(Modifier.width(12.dp))
                 BasicTextField(
                     value = query,
                     onValueChange = onQuery,
@@ -394,7 +400,6 @@ private fun ShelfBar(
                     keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
                     modifier = Modifier
                         .weight(1f)
-                        .offset(x = (-13).dp)
                         .focusRequester(focus),
                     decorationBox = { field ->
                         Box {
@@ -412,8 +417,7 @@ private fun ShelfBar(
                 Micro(text = "$shown / $total")
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .offset(x = 13.dp)
+                        .size(48.dp)
                         .clickable {
                             onQuery("")
                             keyboard?.hide()
@@ -425,7 +429,12 @@ private fun ShelfBar(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("\u2715", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = scheme.onSurfaceVariant,
+                    )
                 }
             }
         } else {
@@ -443,7 +452,6 @@ private fun ShelfBar(
                     Box(
                         modifier = Modifier
                             .size(40.dp)
-                            .offset(x = 13.dp)
                             .clickable { onFindOpen(true) }
                             .semantics {
                                 contentDescription = "Filter library"
@@ -473,24 +481,24 @@ private fun SortSegments(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
     )
     Row(modifier = Modifier.height(32.dp).border(1.dp, scheme.onSurface)) {
         options.forEach { (option, label) ->
-            val selected = option == sort
+            val on = option == sort
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .background(if (selected) scheme.onSurface else Color.Transparent)
+                    .background(if (on) scheme.onSurface else Color.Transparent)
                     .clickable { onSort(option) }
                     .padding(horizontal = 10.dp)
                     .semantics {
                         contentDescription = "Order by $label"
-                        role = Role.Button
-                        this.selected = selected
+                        role = Role.RadioButton
+                        this.selected = on
                     },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (selected) scheme.background else scheme.onSurfaceVariant,
+                    color = if (on) scheme.background else scheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -553,7 +561,7 @@ private fun ProjectRow(
                 Spacer(Modifier.height(7.dp))
                 Micro(
                     text = listOfNotNull(
-                        "Online".takeIf { project.isOnline },
+                        if (project.isComic) "Comic" else "Online".takeIf { project.isOnline },
                         if (position != null && percent != null) {
                             "Ch. ${position.toString().padStart(2, '0')} · $percent%"
                         } else {
@@ -607,14 +615,14 @@ private fun EmptyLibrary(modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(horizontal = ScreenPad)) {
         Spacer(Modifier.height(32.dp))
         Text(
-            text = "No novels yet.",
+            text = "Nothing here yet.",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Spacer(Modifier.height(10.dp))
         Text(
-            text = "Search for a novel below, or tap DIR to import a folder of chapters " +
-                "(.md and .txt open in natural order).",
+            text = "Search for a novel or a comic below, or tap DIR to import a folder of " +
+                "chapters (.md and .txt open in natural order).",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 280.dp),

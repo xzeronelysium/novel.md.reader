@@ -3,6 +3,7 @@ package com.mdreader.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.scale
 import android.util.LruCache
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -160,9 +161,9 @@ private fun ImageBitmap.smoothed(width: Int): ImageBitmap {
     var bitmap = asAndroidBitmap()
     val targetHeight = (width * bitmap.height / bitmap.width).coerceAtLeast(1)
     while (bitmap.width / 2 > width) {
-        bitmap = Bitmap.createScaledBitmap(bitmap, bitmap.width / 2, bitmap.height / 2, true)
+        bitmap = bitmap.scale(bitmap.width / 2, bitmap.height / 2)
     }
-    return Bitmap.createScaledBitmap(bitmap, width, targetHeight, true).asImageBitmap()
+    return bitmap.scale(width, targetHeight).asImageBitmap()
 }
 
 /** [smoothed], then box-blurred three times, so stretching it to screen size shows no grid. */

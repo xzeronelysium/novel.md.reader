@@ -322,3 +322,14 @@ fun Block.chatMessages(): List<ChatMessage>? {
         else -> null
     }
 }
+
+/** Approximate number of characters in a block, used to size the reader's chapter cache. */
+fun Block.charCount(): Int = when (this) {
+    is Block.Heading -> text.length
+    is Block.Paragraph -> spans.sumOf { it.text.length }
+    is Block.Bullet -> spans.sumOf { it.text.length }
+    is Block.Numbered -> marker.length + spans.sumOf { it.text.length }
+    is Block.Quote -> spans.sumOf { it.text.length }
+    Block.Rule -> 0
+    is Block.Code -> text.length
+}
