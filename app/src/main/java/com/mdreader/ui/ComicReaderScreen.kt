@@ -868,6 +868,9 @@ private fun ZoomableComicPage(source: ComicSource, url: String) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // The page sits above the taskbar, never behind it — pan bounds follow the box,
+            // so a zoomed panel stops exactly where the system area begins.
+            .navigationBarsPadding()
             .onSizeChanged { bounds = it }
             .pointerInput(url) {
                 awaitEachGesture {
