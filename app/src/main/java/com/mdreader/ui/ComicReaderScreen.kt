@@ -55,6 +55,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -119,6 +120,8 @@ fun ComicReaderScreen(
     var zoomMode by rememberSaveable(project.id) { mutableStateOf(initialZoom) }
     var restoredPage by remember(project.id) { mutableStateOf<Int?>(null) }
     var pendingPage by remember(project.id) { mutableStateOf(start?.scrollIndex) }
+    // How far the background sweep has pushed whole-chapter prefetching for this chapter.
+    var sweptTo by remember(project.id, index) { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -186,7 +189,9 @@ fun ComicReaderScreen(
     }
 
     // Warm a window ahead of the screen, in parallel, and near the end the next chapter's page
-    // list and its first pages too, so NEXT lands already loaded.
+    // list and its first pages too, so NEXT lands already loaded. Behind the window, a slower
+    // background sweep keeps whole-chapter reading free of placeholders; it runs in the
+    // reader's own scope, so scrolling past it never cancels a download mid-flight.
     LaunchedEffect(pages, index, firstPage) {
         if (pages.isEmpty()) return@LaunchedEffect
         val page = firstPage
@@ -194,6 +199,22 @@ fun ComicReaderScreen(
             (page + 1..minOf(page + 8, pages.lastIndex)).forEach { i ->
                 pages.getOrNull(i)?.let { url ->
                     launch { ComicCache.bitmap(context, source, url, 1440) }
+                }
+            }
+        }
+        val sweepEnd = minOf(page + 24, pages.lastIndex)
+        if (sweepEnd > sweptTo) {
+            val from = sweptTo
+            sweptTo = sweepEnd
+            scope.launch {
+                (from..sweepEnd).chunked(4).forEach { chunk ->
+                    coroutineScope {
+                        chunk.forEach { i ->
+                            pages.getOrNull(i)?.let { url ->
+                                launch { ComicCache.bitmap(context, source, url, 1440) }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -857,8 +878,8 @@ private fun ZoomableComicPage(source: ComicSource, url: String) {
     val context = LocalContext.current.applicationContext
     var image by remember(url) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(url) {
-        // Panels need real pixels: decode wider than the strip's 1440 for readable zoom.
-        image = ComicCache.bitmap(context, source, url, maxWidth = 2048)
+        // The whole point of the zoom view: true source pixels, every panel at its best.
+        image = ComicCache.bitmap(context, source, url, maxWidth = ComicCache.NATIVE_WIDTH)
     }
     var scale by remember(url) { mutableFloatStateOf(1f) }
     var offset by remember(url) { mutableStateOf(Offset.Zero) }
@@ -922,6 +943,7 @@ private fun ZoomableComicPage(source: ComicSource, url: String) {
                 bitmap = bitmap,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
+                filterQuality = FilterQuality.High,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {

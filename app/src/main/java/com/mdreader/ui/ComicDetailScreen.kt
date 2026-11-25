@@ -93,7 +93,8 @@ fun ComicDetailScreen(
     val source = state.source
     val chapters = state.chapters
     val coverUrl = details?.cover ?: state.coverUrl.ifEmpty { state.project?.coverUrl.orEmpty() }
-    val cover = rememberComicCover(source, coverUrl.ifEmpty { null })
+    // The hero fills the screen width; decode it at the panel scale, not the shelf's 720.
+    val cover = rememberComicCover(source, coverUrl.ifEmpty { null }, maxWidth = 1080)
     val listState = rememberLazyListState()
 
     Column(

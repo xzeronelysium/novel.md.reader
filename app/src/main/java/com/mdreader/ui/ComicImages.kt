@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -26,14 +27,14 @@ import com.mdreader.data.comics.ComicSource
 
 /** A comic cover, decoded at shelf/detail size and cached like the novel covers. */
 @Composable
-fun rememberComicCover(source: ComicSource?, url: String?): ImageBitmap? {
+fun rememberComicCover(source: ComicSource?, url: String?, maxWidth: Int = 720): ImageBitmap? {
     val context = LocalContext.current.applicationContext
     var image by remember(url, source?.id) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(url, source) {
         image = if (url.isNullOrEmpty() || source == null) {
             null
         } else {
-            ComicCache.bitmap(context, source, url, maxWidth = 720)
+            ComicCache.bitmap(context, source, url, maxWidth = maxWidth)
         }
     }
     return image
@@ -79,6 +80,8 @@ fun ComicPage(
                 contentDescription = null,
                 modifier = Modifier.fillMaxWidth(),
                 contentScale = ContentScale.FillWidth,
+                // The strip decodes wider than the screen; the shrink to fit reads clean.
+                filterQuality = FilterQuality.High,
             )
         }
     }

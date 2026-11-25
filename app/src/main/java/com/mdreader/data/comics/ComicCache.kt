@@ -140,11 +140,19 @@ internal object ComicCache {
         }
     }
 
+    /** True source pixels: no downsampling at all (the memory guard below still applies). */
+    const val NATIVE_WIDTH = Int.MAX_VALUE
+
     private fun decode(bytes: ByteArray, maxWidth: Int): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= maxWidth) sample *= 2
+        // A native decode that would swallow the heap comes back to a 2048 ceiling instead;
+        // webtoon pages are nowhere near this, but one hostile image must not OOM the reader.
+        if (sample == 1 && bounds.outWidth.toLong() * bounds.outHeight * 4 > 60L * 1024 * 1024) {
+            while (bounds.outWidth / (sample * 2) >= 2048) sample *= 2
+        }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }.getOrNull()
 
