@@ -26,6 +26,9 @@ class LibraryStore(private val filesDir: File) {
     private val historyById = LinkedHashMap<String, ReadingHistory>()
     /** Comics remember which view they were last read in: true = the zoom pager. */
     private val comicZoomById = mutableMapOf<String, Boolean>()
+    /** The folder the user picked for saving comics to storage, once and for all. */
+    private var storageRoot: String? = null
+    private var storageRootName: String? = null
     private var loaded = false
     private var textSizeLevel = 1
 
@@ -145,6 +148,28 @@ class LibraryStore(private val filesDir: File) {
         persistProgress()
     }
 
+    /** The picked storage folder for saving comics outside the app, or null before the first pick. */
+    @Synchronized
+    fun storageRoot(): String? {
+        ensureLoaded()
+        return storageRoot
+    }
+
+    @Synchronized
+    fun storageRootName(): String? {
+        ensureLoaded()
+        return storageRootName
+    }
+
+    @Synchronized
+    fun setStorageRoot(uri: String, name: String) {
+        ensureLoaded()
+        if (uri == storageRoot) return
+        storageRoot = uri
+        storageRootName = name
+        persistProgress()
+    }
+
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
@@ -180,6 +205,8 @@ class LibraryStore(private val filesDir: File) {
                     if (zoom.optBoolean(id, false)) comicZoomById[id] = true
                 }
             }
+            storageRoot = progressRoot.optString("storageRoot").ifEmpty { null }
+            storageRootName = progressRoot.optString("storageRootName").ifEmpty { null }
         } else {
             legacyProgress?.let(::readProgress)
             legacyTextSize?.let { textSizeLevel = it }
@@ -356,14 +383,13 @@ class LibraryStore(private val filesDir: File) {
         }
         val zoomObject = JSONObject()
         comicZoomById.forEach { (id, zoom) -> zoomObject.put(id, zoom) }
-        writeAtomically(
-            progressFile,
-            JSONObject()
-                .put("progress", progressObject)
-                .put("textSize", textSizeLevel)
-                .put("comicZoom", zoomObject)
-                .toString(),
-        )
+        val progressJson = JSONObject()
+            .put("progress", progressObject)
+            .put("textSize", textSizeLevel)
+            .put("comicZoom", zoomObject)
+        storageRoot?.let { progressJson.put("storageRoot", it) }
+        storageRootName?.let { progressJson.put("storageRootName", it) }
+        writeAtomically(progressFile, progressJson.toString())
     }
 
     private fun writeAtomically(target: File, text: String) {

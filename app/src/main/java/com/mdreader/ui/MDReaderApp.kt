@@ -48,6 +48,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 import java.util.UUID
@@ -56,6 +57,7 @@ import com.mdreader.data.checkOnlineProject
 import com.mdreader.data.refreshOnlineProject
 import com.mdreader.data.comics.ComicCache
 import com.mdreader.data.comics.ComicMemo
+import com.mdreader.data.comics.ComicStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -95,6 +97,9 @@ fun MDReaderApp() {
     var comicDetail by remember { mutableStateOf<ComicDetailState?>(null) }
     var comicReading by remember { mutableStateOf<Project?>(null) }
     var comicStart by remember { mutableStateOf<Progress?>(null) }
+    // Saving a comic to the user's own storage folder: the folder, and the job doing the writing.
+    var comicSave by remember { mutableStateOf(ComicSaveState()) }
+    var comicSaveJob by remember { mutableStateOf<Job?>(null) }
 
     LaunchedEffect(Unit) {
         projects = withContext(Dispatchers.IO) { store.load() }
@@ -125,6 +130,92 @@ fun MDReaderApp() {
             result.fold(
                 onSuccess = { },
                 onFailure = { notify(it.message ?: "Couldn't import that folder.") },
+            )
+        }
+    }
+
+    // The folder comics are saved to as plain files. Picked once, kept across restarts.
+    val storagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        ComicStorage.keepAccess(context, uri)
+        val name = ComicStorage.folderName(uri)
+        scope.launch(Dispatchers.IO) { store.setStorageRoot(uri.toString(), name) }
+        comicSave = comicSave.copy(rootName = name, error = null, finished = null)
+    }
+
+    /**
+     * Saves chapters of the open comic to the picked folder, as real folders and files. NEXT
+     * counts start after the reading position; ALL starts at the first chapter. Chapters that
+     * are already complete on disk are skipped, and a stopped run resumes file by file.
+     */
+    fun saveComicToStorage(count: Int?) {
+        val page = comicDetail ?: return
+        val project = page.project ?: return
+        val source = page.source ?: return
+        val root = store.storageRoot() ?: run {
+            storagePicker.launch(null)
+            return
+        }
+        if (comicSave.running) return
+        val from = if (count == null) 0 else (page.resumeIndex ?: -1) + 1
+        val targets = project.chapters.drop(from).let { if (count == null) it else it.take(count) }
+        comicSave = comicSave.copy(
+            running = true,
+            error = null,
+            finished = null,
+            chapterDone = 0,
+            chapterTotal = targets.size,
+            pageDone = 0,
+            pageTotal = 0,
+        )
+        val treeUri = root.toUri()
+        val rootName = comicSave.rootName
+        comicSaveJob = scope.launch(Dispatchers.IO) {
+            var saved = 0
+            var failed: String? = null
+            for ((position, chapter) in targets.withIndex()) {
+                if (!isActive) break
+                val number = from + position
+                val label = "#${(number + 1).toString().padStart(3, '0')}"
+                comicSave = comicSave.copy(chapterLabel = label, pageDone = 0)
+                try {
+                    val pages = ComicCache.pages(context, source, chapter.uri)
+                    comicSave = comicSave.copy(pageTotal = pages.size)
+                    val wrote = ComicStorage.saveChapter(
+                        context = context,
+                        source = source,
+                        treeUri = treeUri,
+                        comicName = project.name,
+                        chapterName = "$label ${chapter.name}",
+                        pages = pages,
+                        onPage = { done -> comicSave = comicSave.copy(pageDone = done) },
+                    )
+                    if (wrote == null) {
+                        // Already complete on disk; not saved again, but not an error either.
+                    } else if (wrote < pages.size) {
+                        failed = "Some pages of chapter ${number + 1} didn't save. Check your connection and run it again."
+                        break
+                    } else {
+                        saved++
+                    }
+                    comicSave = comicSave.copy(chapterDone = position + 1)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failed = (e as? ComicException)?.message ?: "Couldn't save chapter ${number + 1}."
+                    break
+                }
+            }
+            comicSave = comicSave.copy(
+                running = false,
+                error = failed,
+                finished = failed ?: when {
+                    saved == 0 && targets.isEmpty() -> "Nothing left to save from here."
+                    saved == 0 -> "Everything was already saved."
+                    else -> "Saved $saved chapter${if (saved == 1) "" else "s"} to $rootName."
+                },
             )
         }
     }
@@ -349,6 +440,7 @@ fun MDReaderApp() {
      * [ComicMemo], and the chapter you'd land on starts warming before you tap Read.
      */
     fun openComic(source: ComicSource, hit: ComicHit) {
+        comicSave = ComicSaveState(rootName = store.storageRootName())
         comicDetail = ComicDetailState(
             sourceId = source.id,
             path = hit.path,
@@ -545,10 +637,17 @@ fun MDReaderApp() {
         val page = comicDetail!!
         ComicDetailScreen(
             state = page,
+            storage = comicSave,
             onBack = { comicDetail = null },
             onRetry = {
                 val source = ComicSources.byId(page.sourceId)
                 if (source != null) openComic(source, ComicHit(title = page.title, path = page.path))
+            },
+            onPickStorage = { storagePicker.launch(null) },
+            onSave = ::saveComicToStorage,
+            onStopSave = {
+                comicSaveJob?.cancel()
+                comicSave = comicSave.copy(running = false, finished = null)
             },
             onRead = { index ->
                 page.project?.let { project ->

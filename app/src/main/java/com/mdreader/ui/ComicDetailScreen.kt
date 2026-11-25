@@ -72,6 +72,21 @@ data class ComicDetailState(
     val source: ComicSource? get() = ComicSources.byId(sourceId)
 }
 
+/** What the comic page shows about saving to the user's own storage folder. */
+data class ComicSaveState(
+    /** The picked folder's name, or null before the first pick. */
+    val rootName: String? = null,
+    val running: Boolean = false,
+    /** The chapter currently being written, as its issue number. */
+    val chapterLabel: String = "",
+    val chapterDone: Int = 0,
+    val chapterTotal: Int = 0,
+    val pageDone: Int = 0,
+    val pageTotal: Int = 0,
+    val finished: String? = null,
+    val error: String? = null,
+)
+
 /**
  * A comic's poster page in the Kuro skin: cover full-bleed with the title over its own scrim,
  * a ticker of facts, one paper-white Continue button, then every chapter by issue number.
@@ -80,12 +95,16 @@ data class ComicDetailState(
 @Composable
 fun ComicDetailScreen(
     state: ComicDetailState,
+    storage: ComicSaveState,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onRead: (Int) -> Unit,
     onContinue: () -> Unit,
     onToggleLibrary: () -> Unit,
     onOpenLibrary: () -> Unit,
+    onPickStorage: () -> Unit,
+    onSave: (Int?) -> Unit,
+    onStopSave: () -> Unit,
 ) {
     ComicSystemBars()
     BackHandler { onBack() }
@@ -319,6 +338,96 @@ fun ComicDetailScreen(
                                         color = ComicSkin.Ink,
                                     )
                                 }
+                            }
+                        }
+                    }
+
+                    // Plain files in a folder of the user's own: pick it once, save whole chapters.
+                    Spacer(Modifier.height(24.dp))
+                    Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
+                        Micro(text = "Storage", color = ComicSkin.Accent)
+                        Spacer(Modifier.height(10.dp))
+                        if (storage.rootName == null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, ComicSkin.LineSoft)
+                                    .clickable(onClick = onPickStorage)
+                                    .padding(vertical = 14.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "SAVE TO A FOLDER IN STORAGE",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = ComicSkin.Ink,
+                                )
+                            }
+                        } else if (storage.running) {
+                            Micro(
+                                text = "${storage.chapterLabel} · page ${storage.pageDone}/${storage.pageTotal}",
+                                color = ComicSkin.Sub,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            val fraction = if (storage.pageTotal > 0) {
+                                (storage.pageDone.toFloat() / storage.pageTotal).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
+                            Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(ComicSkin.Line)) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(fraction)
+                                        .fillMaxHeight()
+                                        .background(ComicSkin.Accent),
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Micro(
+                                    text = "Chapter ${storage.chapterDone + 1} of ${storage.chapterTotal} · ${storage.rootName}",
+                                    color = ComicSkin.Sub,
+                                )
+                                Text(
+                                    text = "STOP",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = ComicSkin.Accent,
+                                    modifier = Modifier
+                                        .clickable(onClick = onStopSave)
+                                        .padding(vertical = 6.dp, horizontal = 4.dp),
+                                )
+                            }
+                        } else {
+                            Micro(text = "Folder · ${storage.rootName}", color = ComicSkin.Sub)
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                listOf("NEXT 10" to 10, "NEXT 50" to 50, "ALL" to null).forEach { (label, count) ->
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .border(1.dp, ComicSkin.LineSoft)
+                                            .clickable { onSave(count) }
+                                            .padding(vertical = 13.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = ComicSkin.Ink,
+                                        )
+                                    }
+                                }
+                            }
+                            storage.error?.let {
+                                Spacer(Modifier.height(8.dp))
+                                Micro(text = it, color = ComicSkin.Sub)
+                            }
+                            storage.finished?.let {
+                                Spacer(Modifier.height(8.dp))
+                                Micro(text = it, color = ComicSkin.Sub)
                             }
                         }
                     }
