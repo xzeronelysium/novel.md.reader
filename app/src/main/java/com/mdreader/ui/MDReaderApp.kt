@@ -447,18 +447,6 @@ fun MDReaderApp() {
         }
     }
 
-    /**
-     * Reading is remembering: a comic joins the library the moment you open its reader, so the
-     * shelf, the history and the saved position all have something to hold.
-     */
-    fun rememberComicReading(project: Project, inLibrary: Boolean) {
-        if (inLibrary) return
-        scope.launch {
-            withContext(Dispatchers.IO) { store.addOrReplace(project) }
-            projects = withContext(Dispatchers.IO) { store.load() }
-        }
-    }
-
     /** A history row reopens whatever it was: the comic's source, or the novel's page. */
     fun openHistory(entry: ReadingHistory) {
         val source = entry.sourceId?.let { ComicSources.byId(it) }
@@ -564,14 +552,12 @@ fun MDReaderApp() {
             },
             onRead = { index ->
                 page.project?.let { project ->
-                    rememberComicReading(project, page.inLibrary)
                     comicStart = Progress(chapterIndex = index)
                     comicReading = project
                 }
             },
             onContinue = {
                 page.project?.let { project ->
-                    rememberComicReading(project, page.inLibrary)
                     comicStart = store.progress(project.id)?.remapTo(project.chapters)
                     comicReading = project
                 }
