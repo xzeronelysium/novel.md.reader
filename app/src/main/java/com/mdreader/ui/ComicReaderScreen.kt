@@ -2,6 +2,7 @@ package com.mdreader.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -60,9 +63,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The comic reader: one continuous vertical strip of page images, nothing else. No paged mode, no
- * tap zones and no middle-tap menu — chapter access is the top bar's INDEX, exactly like the text
- * reader. Position is the chapter plus the page at the top of the screen.
+ * The comic reader in the Kuro skin: one continuous vertical strip of page images on pure
+ * black, edge to edge, with floating translucent bars for back, index and chapter steps.
+ * No paged mode, no tap zones; position is the chapter plus the page at the top of the screen.
  */
 @OptIn(FlowPreview::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -74,7 +77,6 @@ fun ComicReaderScreen(
     onProgress: (Progress) -> Unit,
 ) {
     val context = LocalContext.current.applicationContext
-    val scheme = MaterialTheme.colorScheme
     val chapters = project.chapters
     val start = remember(project.id) { initialProgress?.remapTo(chapters) }
     var index by rememberSaveable(project.id) {
@@ -176,63 +178,14 @@ fun ComicReaderScreen(
 
     BackHandler { leave() }
 
-    Column(
+    // The strip and the floating bars share one stage; the bars dissolve into the pages.
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(scheme.background)
+            .background(ComicSkin.PageStage)
             .statusBarsPadding(),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .padding(start = 4.dp, end = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clickable(onClick = { leave() })
-                    .semantics {
-                        contentDescription = "Back to library"
-                        role = Role.Button
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                QuietArrow(direction = ArrowDirection.Left)
-            }
-            Text(
-                text = project.name.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Box(
-                modifier = Modifier
-                    .height(48.dp)
-                    .clickable(enabled = chapters.isNotEmpty()) { showChapters = true }
-                    .padding(horizontal = 12.dp)
-                    .semantics {
-                        contentDescription = "Open chapter index"
-                        role = Role.Button
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "INDEX",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = scheme.onSurface,
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
             when {
                 error != null -> ComicMessage(
                     title = "Couldn't load this chapter",
@@ -244,7 +197,7 @@ fun ComicReaderScreen(
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
-                        color = scheme.primary,
+                        color = ComicSkin.Accent,
                         strokeWidth = 1.5.dp,
                     )
                 }
@@ -256,60 +209,66 @@ fun ComicReaderScreen(
                     onAction = { attempt++ },
                 )
 
-                else -> {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        item(key = "opening") {
-                            Column(modifier = Modifier.padding(horizontal = ScreenPad, vertical = 22.dp)) {
-                                Micro(
-                                    text = "Chapter ${(index + 1).toString().padStart(2, '0')}",
-                                    accent = true,
-                                )
-                                Spacer(Modifier.height(10.dp))
-                                Text(
-                                    text = chapters.getOrNull(index)?.title.orEmpty(),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = scheme.onSurface,
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Micro(text = "${pages.size} pages · vertical strip")
+                else -> LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    item(key = "opening") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = ScreenPad)
+                                .padding(top = 72.dp, bottom = 22.dp),
+                        ) {
+                            Micro(
+                                text = "Chapter ${(index + 1).toString().padStart(2, '0')}",
+                                color = ComicSkin.Accent,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = chapters.getOrNull(index)?.title.orEmpty(),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = ComicSkin.Ink,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Micro(text = "${pages.size} pages · vertical strip", color = ComicSkin.Sub)
+                        }
+                    }
+                    items(pages) { url ->
+                        ComicPage(source = source, url = url)
+                    }
+                    item(key = "end") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = ScreenPad)
+                                .padding(top = 34.dp, bottom = 118.dp),
+                        ) {
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Micro(text = "End of chapter", color = ComicSkin.Sub)
                             }
-                        }
-                        items(pages) { url ->
-                            ComicPage(source = source, url = url)
-                        }
-                        item(key = "end") {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = ScreenPad, vertical = 30.dp),
-                            ) {
-                                Micro(text = "End of chapter")
-                                Spacer(Modifier.height(14.dp))
-                                Row {
-                                    if (index > 0) {
-                                        Text(
-                                            text = "PREVIOUS",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = scheme.primary,
-                                            modifier = Modifier
-                                                .clickable { goTo(index - 1) }
-                                                .padding(vertical = 8.dp, horizontal = 2.dp),
-                                        )
-                                    }
-                                    Spacer(Modifier.weight(1f))
-                                    if (index < chapters.lastIndex) {
-                                        Text(
-                                            text = "NEXT CHAPTER",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = scheme.primary,
-                                            modifier = Modifier
-                                                .clickable { goTo(index + 1) }
-                                                .padding(vertical = 8.dp, horizontal = 2.dp),
-                                        )
-                                    }
+                            Spacer(Modifier.height(14.dp))
+                            Row {
+                                if (index > 0) {
+                                    Text(
+                                        text = "PREVIOUS",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = ComicSkin.Sub,
+                                        modifier = Modifier
+                                            .clickable { goTo(index - 1) }
+                                            .padding(vertical = 8.dp, horizontal = 2.dp),
+                                    )
+                                }
+                                Spacer(Modifier.weight(1f))
+                                if (index < chapters.lastIndex) {
+                                    Text(
+                                        text = "NEXT CHAPTER",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = ComicSkin.Accent,
+                                        modifier = Modifier
+                                            .clickable { goTo(index + 1) }
+                                            .padding(vertical = 8.dp, horizontal = 2.dp),
+                                    )
                                 }
                             }
                         }
@@ -318,17 +277,84 @@ fun ComicReaderScreen(
             }
         }
 
+        // The floating top bar: back, the comic's name, the chapter index.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopStart)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.92f),
+                        0.55f to Color.Black.copy(alpha = 0.5f),
+                        1f to Color.Transparent,
+                    ),
+                ),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .padding(start = 8.dp, end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clickable(onClick = { leave() })
+                        .semantics {
+                            contentDescription = "Back to library"
+                            role = Role.Button
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    QuietArrow(direction = ArrowDirection.Left, color = ComicSkin.Ink)
+                }
+                Text(
+                    text = project.name.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = ComicSkin.Sub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    modifier = Modifier
+                        .clickable(enabled = chapters.isNotEmpty()) { showChapters = true }
+                        .border(1.dp, ComicSkin.LineSoft)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .semantics {
+                            contentDescription = "Open chapter index"
+                            role = Role.Button
+                        },
+                ) {
+                    Text(
+                        text = "INDEX",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ComicSkin.Ink,
+                    )
+                }
+            }
+        }
+
+        // The floating footer: chapter steps and the page counter, over the artwork.
         if (chapters.isNotEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.45f to Color.Black.copy(alpha = 0.7f),
+                            1f to Color.Black.copy(alpha = 0.92f),
+                        ),
+                    )
                     .navigationBarsPadding(),
             ) {
-                Hairline()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
+                        .height(58.dp)
                         .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -341,9 +367,9 @@ fun ComicReaderScreen(
                                     .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                QuietArrow(direction = ArrowDirection.Left)
+                                QuietArrow(direction = ArrowDirection.Left, color = ComicSkin.Sub)
                                 Spacer(Modifier.width(8.dp))
-                                Micro(text = "Prev", color = scheme.onSurface)
+                                Micro(text = "Prev", color = ComicSkin.Sub)
                             }
                         }
                     }
@@ -354,7 +380,7 @@ fun ComicReaderScreen(
                             "${index + 1} / ${chapters.size} · page ${firstPage + 1}/${pages.size}"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = scheme.onSurfaceVariant,
+                        color = ComicSkin.Sub,
                         modifier = Modifier.semantics {
                             contentDescription = "Chapter ${index + 1} of ${chapters.size}"
                         },
@@ -368,14 +394,14 @@ fun ComicReaderScreen(
                                     .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Micro(text = "Next", color = scheme.onSurface)
+                                Micro(text = "Next", color = ComicSkin.Accent)
                                 Spacer(Modifier.width(8.dp))
-                                QuietArrow(direction = ArrowDirection.Right)
+                                QuietArrow(direction = ArrowDirection.Right, color = ComicSkin.Accent)
                             }
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
             }
         }
     }
@@ -385,8 +411,8 @@ fun ComicReaderScreen(
             onDismissRequest = { showChapters = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             shape = RectangleShape,
-            containerColor = scheme.surfaceContainer,
-            scrimColor = scheme.scrim.copy(alpha = 0.32f),
+            containerColor = ComicSkin.Stage,
+            scrimColor = Color.Black.copy(alpha = 0.55f),
             tonalElevation = 0.dp,
         ) {
             Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
@@ -399,12 +425,12 @@ fun ComicReaderScreen(
                     Text(
                         text = "Chapters",
                         style = MaterialTheme.typography.titleLarge,
-                        color = scheme.onSurface,
+                        color = ComicSkin.Ink,
                         modifier = Modifier.weight(1f),
                     )
-                    Micro(text = "${chapters.size}")
+                    Micro(text = "${chapters.size}", color = ComicSkin.Sub)
                 }
-                Hairline()
+                Hairline(color = ComicSkin.Line)
                 LazyColumn(modifier = Modifier.fillMaxWidth().height(480.dp)) {
                     items(chapters.size) { i ->
                         val chapter = chapters[i]
@@ -420,20 +446,20 @@ fun ComicReaderScreen(
                                     .padding(vertical = 13.dp),
                             ) {
                                 Text(
-                                    text = (i + 1).toString(),
+                                    text = "#${(i + 1).toString().padStart(3, '0')}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (on) scheme.primary else scheme.onSurfaceVariant,
-                                    modifier = Modifier.width(44.dp).padding(top = 8.dp),
+                                    color = if (on) ComicSkin.Accent else ComicSkin.Sub,
+                                    modifier = Modifier.width(52.dp).padding(top = 8.dp),
                                 )
                                 Text(
                                     text = chapter.title,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = if (on) scheme.primary else scheme.onSurface,
+                                    color = if (on) ComicSkin.Accent else ComicSkin.Ink,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Hairline()
+                            Hairline(color = ComicSkin.Line)
                         }
                     }
                 }
@@ -449,7 +475,6 @@ private fun ComicMessage(
     action: String,
     onAction: () -> Unit,
 ) {
-    val scheme = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -459,19 +484,19 @@ private fun ComicMessage(
         Text(
             text = title,
             style = MaterialTheme.typography.titleLarge,
-            color = scheme.onSurface,
+            color = ComicSkin.Ink,
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = body,
             style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant,
+            color = ComicSkin.Sub,
         )
         Spacer(Modifier.height(20.dp))
         Text(
             text = action.uppercase(),
             style = MaterialTheme.typography.labelLarge,
-            color = scheme.primary,
+            color = ComicSkin.Accent,
             modifier = Modifier.clickable(onClick = onAction).padding(vertical = 8.dp),
         )
     }

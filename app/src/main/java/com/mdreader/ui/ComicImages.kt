@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,14 +56,14 @@ fun ComicPage(
         modifier = modifier
             .fillMaxWidth()
             .then(if (image == null) Modifier.height(280.dp) else Modifier)
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            .background(ComicSkin.Panel),
         contentAlignment = Alignment.Center,
     ) {
         val bitmap = image
         if (bitmap == null) {
             CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
-                color = MaterialTheme.colorScheme.outline,
+                color = ComicSkin.Sub,
                 strokeWidth = 1.5.dp,
             )
         } else {
