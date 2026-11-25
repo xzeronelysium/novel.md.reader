@@ -536,6 +536,10 @@ fun MDReaderApp() {
             project = reading,
             source = source,
             initialProgress = comicStart,
+            initialZoom = store.comicZoomMode(reading.id),
+            onModeChange = { zoom ->
+                scope.launch(Dispatchers.IO) { store.setComicZoomMode(reading.id, zoom) }
+            },
             onBack = {
                 comicStart = null
                 comicReading = null

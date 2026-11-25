@@ -24,6 +24,8 @@ class LibraryStore(private val filesDir: File) {
     private val progressById = mutableMapOf<String, Progress>()
     /** Insertion-ordered: the most recent reading session is the last one in. */
     private val historyById = LinkedHashMap<String, ReadingHistory>()
+    /** Comics remember which view they were last read in: true = the zoom pager. */
+    private val comicZoomById = mutableMapOf<String, Boolean>()
     private var loaded = false
     private var textSizeLevel = 1
 
@@ -124,6 +126,25 @@ class LibraryStore(private val filesDir: File) {
         persistHistory()
     }
 
+    /** Whether a comic was last read in the zoom pager rather than the vertical strip. */
+    @Synchronized
+    fun comicZoomMode(projectId: String): Boolean {
+        ensureLoaded()
+        return comicZoomById[projectId] == true
+    }
+
+    @Synchronized
+    fun setComicZoomMode(projectId: String, zoom: Boolean) {
+        ensureLoaded()
+        if (comicZoomById[projectId] == zoom) return
+        if (zoom) {
+            comicZoomById[projectId] = true
+        } else {
+            comicZoomById.remove(projectId)
+        }
+        persistProgress()
+    }
+
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
@@ -153,6 +174,12 @@ class LibraryStore(private val filesDir: File) {
         if (progressRoot != null) {
             readProgress(progressRoot.optJSONObject("progress") ?: JSONObject())
             textSizeLevel = progressRoot.optInt("textSize", 1).coerceIn(0, 2)
+            val zoom = progressRoot.optJSONObject("comicZoom")
+            if (zoom != null) {
+                zoom.keys().forEach { id ->
+                    if (zoom.optBoolean(id, false)) comicZoomById[id] = true
+                }
+            }
         } else {
             legacyProgress?.let(::readProgress)
             legacyTextSize?.let { textSizeLevel = it }
@@ -327,9 +354,15 @@ class LibraryStore(private val filesDir: File) {
                     .put("updatedAt", progress.updatedAt)
             )
         }
+        val zoomObject = JSONObject()
+        comicZoomById.forEach { (id, zoom) -> zoomObject.put(id, zoom) }
         writeAtomically(
             progressFile,
-            JSONObject().put("progress", progressObject).put("textSize", textSizeLevel).toString(),
+            JSONObject()
+                .put("progress", progressObject)
+                .put("textSize", textSizeLevel)
+                .put("comicZoom", zoomObject)
+                .toString(),
         )
     }
 

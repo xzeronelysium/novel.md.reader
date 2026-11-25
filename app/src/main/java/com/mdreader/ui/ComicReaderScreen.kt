@@ -43,6 +43,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.mdreader.data.Chapter
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
 import com.mdreader.data.comics.ComicCache
@@ -97,6 +99,8 @@ fun ComicReaderScreen(
     project: Project,
     source: ComicSource,
     initialProgress: Progress?,
+    initialZoom: Boolean = false,
+    onModeChange: (Boolean) -> Unit = {},
     onBack: () -> Unit,
     onProgress: (Progress) -> Unit,
 ) {
@@ -112,6 +116,11 @@ fun ComicReaderScreen(
     var attempt by remember(project.id) { mutableIntStateOf(0) }
     var showChapters by remember { mutableStateOf(false) }
     var zoomPage by remember { mutableStateOf<Int?>(null) }
+    // The page the zoom view should open on when a new chapter's pages arrive.
+    var zoomPendingPage by remember { mutableStateOf<Int?>(null) }
+    // The view this comic was last read in: the strip, or the zoom pager.
+    var zoomMode by rememberSaveable(project.id) { mutableStateOf(initialZoom) }
+    var restoredPage by remember(project.id) { mutableStateOf<Int?>(null) }
     var pendingPage by remember(project.id) { mutableStateOf(start?.scrollIndex) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -142,7 +151,18 @@ fun ComicReaderScreen(
         val restore = pendingPage
         pendingPage = null
         val target = (restore ?: 0).coerceIn(0, pages.lastIndex)
+        restoredPage = target
         listState.scrollToItem(target + 1)
+    }
+
+    // A comic last read in the zoom view reopens in it, at the page reading stopped on; a
+    // chapter stepped inside the zoom view lands on its first page the same way.
+    LaunchedEffect(pages) {
+        if (pages.isNotEmpty() && zoomMode && zoomPage == null) {
+            val target = (zoomPendingPage ?: restoredPage ?: 0).coerceIn(0, pages.lastIndex)
+            zoomPendingPage = null
+            zoomPage = target
+        }
     }
 
     // A page is "read" when it reaches the top; the header item shifts pages by one.
@@ -286,7 +306,15 @@ fun ComicReaderScreen(
                         }
                     }
                     itemsIndexed(pages) { pageIndex, url ->
-                        ComicPage(source = source, url = url, onDoubleTap = { zoomPage = pageIndex })
+                        ComicPage(
+                            source = source,
+                            url = url,
+                            onDoubleTap = {
+                                zoomMode = true
+                                onModeChange(true)
+                                zoomPage = pageIndex
+                            },
+                        )
                     }
                     item(key = "end") {
                         // The chapter's sign-off: a vermilion tick, the issue number, and the
@@ -395,7 +423,11 @@ fun ComicReaderScreen(
                 )
                 Box(
                     modifier = Modifier
-                        .clickable(enabled = pages.isNotEmpty()) { zoomPage = firstPage }
+                        .clickable(enabled = pages.isNotEmpty()) {
+                            zoomMode = true
+                            onModeChange(true)
+                            zoomPage = firstPage
+                        }
                         .border(1.dp, ComicSkin.LineSoft)
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                         .semantics {
@@ -516,17 +548,46 @@ fun ComicReaderScreen(
         }
     }
 
-    // One page at panel size: pinch to zoom, pan, double-tap to step between 1x and 2.5x,
-    // swipe between pages. Closing drops the strip back where the overlay left it.
+    // The zoom view: the comic's other reading mode. Entered by the ZOOM chip or a double-tap,
+    // it is remembered as the view this comic reads in; the STRIP chip switches back for good,
+    // while ✕ and back return to the strip once — or leave the reader outright when the zoom
+    // view is the comic's remembered mode. Pages swiped here are saved as reading position.
     val zooming = zoomPage
     if (zooming != null && pages.isNotEmpty()) {
         ComicZoomOverlay(
             source = source,
             pages = pages,
             initialPage = zooming,
-            onClose = { page ->
+            chapters = chapters,
+            index = index,
+            modeZoom = zoomMode,
+            onStrip = { page ->
+                zoomMode = false
+                onModeChange(false)
                 zoomPage = null
                 scope.launch { listState.scrollToItem(page + 1) }
+            },
+            onClose = { page ->
+                zoomPage = null
+                scope.launch {
+                    listState.scrollToItem(page + 1)
+                    if (zoomMode) leave()
+                }
+            },
+            onChapter = { target ->
+                zoomPage = null
+                zoomPendingPage = 0
+                goTo(target)
+            },
+            onZoomProgress = { page ->
+                zoomPage = page
+                onProgress(
+                    Progress(
+                        chapterIndex = index,
+                        scrollIndex = page,
+                        chapterKey = chapters.getOrNull(index)?.uri,
+                    ),
+                )
             },
         )
     }
@@ -628,72 +689,161 @@ private fun ComicMessage(
 }
 
 /**
- * The zoom overlay: the chapter's pages in a horizontal pager, one page filling the screen,
- * pinch to zoom into a panel, pan around, double-tap for 1x / 2.5x. Closing reports the page
- * last looked at so the strip picks up where the overlay left off.
+ * The zoom view: the chapter's pages in a horizontal pager, one page filling the screen,
+ * pinch to zoom into a panel, pan around, double-tap for 1x / 2.5x, swipe between pages.
+ * It is a full reading mode: chapter steps in the footer, pages reported as they're swiped.
  */
 @Composable
 private fun ComicZoomOverlay(
     source: ComicSource,
     pages: List<String>,
     initialPage: Int,
+    chapters: List<Chapter>,
+    index: Int,
+    modeZoom: Boolean,
+    onStrip: (Int) -> Unit,
     onClose: (Int) -> Unit,
+    onChapter: (Int) -> Unit,
+    onZoomProgress: (Int) -> Unit,
 ) {
-    val pagerState = rememberPagerState(
-        initialPage = initialPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0)),
-    ) { pages.size }
-    BackHandler { onClose(pagerState.currentPage) }
+    val chapterMark = chapters.getOrNull(index)?.uri.orEmpty()
+    key(chapterMark) {
+        val pagerState = rememberPagerState(
+            initialPage = initialPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0)),
+        ) { pages.size }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ComicSkin.PageStage),
-    ) {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-        ) { page ->
-            ZoomableComicPage(source = source, url = pages[page])
+        // Every swiped page is reading position, saved as it happens, not just on close.
+        LaunchedEffect(pagerState.currentPage) {
+            onZoomProgress(pagerState.currentPage)
         }
 
-        // The one bar: close on the left, the page counter on the right.
+        BackHandler { onClose(pagerState.currentPage) }
+
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopStart)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.92f),
-                        0.55f to Color.Black.copy(alpha = 0.5f),
-                        1f to Color.Transparent,
-                    ),
-                ),
+                .fillMaxSize()
+                .background(ComicSkin.PageStage),
         ) {
-            Row(
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                ZoomableComicPage(source = source, url = pages[page])
+            }
+
+            // The one bar: close on the left, the strip switch, the page counter on the right.
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
-                    .padding(start = 8.dp, end = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .align(Alignment.TopStart)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.92f),
+                            0.55f to Color.Black.copy(alpha = 0.5f),
+                            1f to Color.Transparent,
+                        ),
+                    ),
             ) {
-                Box(
+                Row(
                     modifier = Modifier
-                        .size(48.dp)
-                        .clickable { onClose(pagerState.currentPage) }
-                        .semantics {
-                            contentDescription = "Close zoom"
-                            role = Role.Button
-                        },
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .padding(start = 8.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = "✕",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = ComicSkin.Ink,
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clickable { onClose(pagerState.currentPage) }
+                            .semantics {
+                                contentDescription = if (modeZoom) "Close reader" else "Back to the strip"
+                                role = Role.Button
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "✕",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = ComicSkin.Ink,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clickable { onStrip(pagerState.currentPage) }
+                            .border(1.dp, ComicSkin.LineSoft)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .semantics {
+                                contentDescription = "Read as a vertical strip"
+                                role = Role.Button
+                            },
+                    ) {
+                        Text(
+                            text = "STRIP",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ComicSkin.Ink,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Micro(text = "Page ${pagerState.currentPage + 1} / ${pages.size}", color = ComicSkin.Sub)
                 }
-                Spacer(Modifier.weight(1f))
-                Micro(text = "Page ${pagerState.currentPage + 1} / ${pages.size}", color = ComicSkin.Sub)
+            }
+
+            // Chapter steps, the same floating bar the strip has.
+            if (chapters.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.45f to Color.Black.copy(alpha = 0.7f),
+                                1f to Color.Black.copy(alpha = 0.92f),
+                            ),
+                        )
+                        .navigationBarsPadding(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(58.dp)
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                            if (index > 0) {
+                                Row(
+                                    modifier = Modifier
+                                        .height(48.dp)
+                                        .clickable { onChapter(index - 1) }
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    QuietArrow(direction = ArrowDirection.Left, color = ComicSkin.Sub)
+                                    Spacer(Modifier.width(8.dp))
+                                    Micro(text = "Prev", color = ComicSkin.Sub)
+                                }
+                            }
+                        }
+                        Micro(text = "${index + 1} / ${chapters.size}", color = ComicSkin.Sub)
+                        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                            if (index < chapters.lastIndex) {
+                                Row(
+                                    modifier = Modifier
+                                        .height(48.dp)
+                                        .clickable { onChapter(index + 1) }
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Micro(text = "Next", color = ComicSkin.Accent)
+                                    Spacer(Modifier.width(8.dp))
+                                    QuietArrow(direction = ArrowDirection.Right, color = ComicSkin.Accent)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
             }
         }
     }
