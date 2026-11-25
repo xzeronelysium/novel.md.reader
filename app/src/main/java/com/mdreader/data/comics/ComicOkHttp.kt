@@ -164,7 +164,7 @@ internal object ComicOkHttp {
     private fun baseRequest(url: String, headers: Map<String, String>): Request.Builder {
         val builder = Request.Builder()
             .url(url)
-            .header("User-Agent", ComicHttp.BROWSER_UA)
+            .header("User-Agent", ComicHttp.userAgent)
             .header(
                 "Accept",
                 "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",

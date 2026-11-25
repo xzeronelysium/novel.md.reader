@@ -31,6 +31,15 @@ internal object ComicHttp {
         "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/124.0.0.0 Mobile Safari/537.36"
 
+    /**
+     * The device's real WebView UA once MainActivity has had its say. Cloudflare binds
+     * cf_clearance to the UA string, and a challenge solved by a WebView claiming to be one
+     * Chrome while its engine is another is the challenge that never clears — so the HTTP
+     * client and the solver WebView both use exactly this string, and it's the honest one.
+     */
+    @Volatile
+    var userAgent: String = BROWSER_UA
+
     private const val TIMEOUT_MS = 20_000
     private const val MAX_BODY_BYTES = 6_000_000
 
@@ -145,7 +154,7 @@ internal object ComicHttp {
         connection.connectTimeout = TIMEOUT_MS
         connection.readTimeout = TIMEOUT_MS
         connection.instanceFollowRedirects = true
-        connection.setRequestProperty("User-Agent", BROWSER_UA)
+        connection.setRequestProperty("User-Agent", userAgent)
         connection.setRequestProperty(
             "Accept",
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",

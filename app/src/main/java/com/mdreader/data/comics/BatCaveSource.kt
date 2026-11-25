@@ -2,6 +2,7 @@ package com.mdreader.data.comics
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -163,16 +164,32 @@ internal class BatCaveSession {
                 val view = webView ?: createWebView().also { webView = it }
                 val done = CompletableDeferred<Unit>()
                 pageLoaded = done
-                // For a GET, load the very URL that was challenged: that is what makes Cloudflare
-                // issue cf_clearance for this browser session (Mihon does the same). A WebView can
-                // only GET, so POST challenges are solved on the site root instead.
-                view.loadUrl(target)
-                val cleared = withTimeoutOrNull(30_000) { done.await() } != null
+                val startedAt = SystemClock.elapsedRealtime()
+                // The Referer rides along, the way the blocked request carried it.
+                view.loadUrl(target, mapOf("Referer" to "${BatCaveSource.origin}/"))
+                // A managed challenge clears itself in a few seconds. One that still says
+                // "Just a moment" after ten wants a human tap — Mihon aborts on that signal
+                // instead of waiting it out, and so do we.
+                val cleared = withTimeoutOrNull(30_000) {
+                    while (!done.isCompleted) {
+                        val interactive = SystemClock.elapsedRealtime() - startedAt > 10_000 &&
+                            view.title.orEmpty().contains("Just a moment", ignoreCase = true)
+                        if (interactive) return@withTimeoutOrNull null
+                        delay(300)
+                    }
+                    Unit
+                } != null
                 pageLoaded = null
                 if (!cleared) {
                     forgetClearance()
+                    val interactive = view.title.orEmpty().contains("Just a moment", ignoreCase = true)
                     throw ComicException(
-                        "BatCave's browser check didn't clear. Try again in a moment.",
+                        if (interactive) {
+                            "This check needs a tap in a real browser. Open batcave.biz in your " +
+                                "browser once, then try again."
+                        } else {
+                            "BatCave's browser check didn't clear. Try again in a moment."
+                        },
                     )
                 }
                 // The JS challenge sets its guard cookie a moment after the page finishes.
@@ -199,7 +216,9 @@ internal class BatCaveSession {
         val view = WebView(AppContextHolder.requireContext)
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
-        view.settings.userAgentString = ComicHttp.BROWSER_UA
+        // Exactly the string the HTTP client sends: Cloudflare signs cf_clearance against the
+        // user agent, so the solver must clear as the same browser the requests claim to be.
+        view.settings.userAgentString = ComicHttp.userAgent
         view.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 // A challenge page finishes first, then the site loads itself; only the second
