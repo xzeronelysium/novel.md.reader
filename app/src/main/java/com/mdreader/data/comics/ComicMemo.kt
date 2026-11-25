@@ -25,6 +25,7 @@ internal object ComicMemo {
         data class Produce(val flight: CompletableDeferred<Any?>) : Decision
     }
 
+    @Suppress("UNCHECKED_CAST")
     suspend fun <T : Any> remember(key: String, ttlMs: Long, producer: suspend () -> T): T {
         while (true) {
             val decision = mutex.withLock {

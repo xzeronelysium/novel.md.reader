@@ -87,6 +87,7 @@ fun ComicDetailScreen(
     onToggleLibrary: () -> Unit,
     onOpenLibrary: () -> Unit,
 ) {
+    ComicSystemBars()
     BackHandler { onBack() }
     val details = state.details
     val source = state.source
@@ -280,41 +281,43 @@ fun ComicDetailScreen(
                         )
                     }
 
-                    Row(
-                        modifier = Modifier
-                            .padding(horizontal = ScreenPad)
-                            .padding(top = 12.dp)
-                            .fillMaxWidth(),
-                    ) {
-                        Box(
+                    if (!state.chaptersLoading) {
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .border(1.dp, ComicSkin.LineSoft)
-                                .clickable(onClick = onToggleLibrary)
-                                .padding(vertical = 14.dp),
-                            contentAlignment = Alignment.Center,
+                                .padding(horizontal = ScreenPad)
+                                .padding(top = 12.dp)
+                                .fillMaxWidth(),
                         ) {
-                            Text(
-                                text = if (state.inLibrary) "✓ IN LIBRARY" else "ADD TO LIBRARY",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = ComicSkin.Ink,
-                            )
-                        }
-                        if (state.inLibrary) {
-                            Spacer(Modifier.width(12.dp))
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .border(1.dp, ComicSkin.LineSoft)
-                                    .clickable(onClick = onOpenLibrary)
+                                    .clickable(onClick = onToggleLibrary)
                                     .padding(vertical = 14.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    text = "OPEN",
+                                    text = if (state.inLibrary) "✓ IN LIBRARY" else "ADD TO LIBRARY",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = ComicSkin.Ink,
                                 )
+                            }
+                            if (state.inLibrary) {
+                                Spacer(Modifier.width(12.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .border(1.dp, ComicSkin.LineSoft)
+                                        .clickable(onClick = onOpenLibrary)
+                                        .padding(vertical = 14.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "OPEN",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = ComicSkin.Ink,
+                                    )
+                                }
                             }
                         }
                     }

@@ -381,6 +381,7 @@ fun MDReaderApp() {
                         details = details,
                         coverUrl = hit.cover,
                         chaptersLoading = true,
+                        loading = false,
                         inLibrary = saved != null,
                     )
                     val chapters = chapterD.await()
@@ -415,8 +416,7 @@ fun MDReaderApp() {
                         inLibrary = saved != null,
                         project = project,
                         resumeIndex = resume,
-                    )
-                    // Warm the chapter Continue or Read lands on, so the reader opens loaded.
+                    )                    // Warm the chapter Continue or Read lands on, so the reader opens loaded.
                     project.chapters.getOrNull(resume ?: 0)?.let { first ->
                         scope.launch(Dispatchers.IO) {
                             runCatching { ComicCache.pages(context, source, first.uri) }

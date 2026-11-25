@@ -1,8 +1,5 @@
 package com.mdreader.ui
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -247,6 +244,7 @@ fun ComicReaderScreen(
         }
     }
 
+    ComicSystemBars()
     BackHandler(enabled = zoomPage == null) { leave() }
 
     // The strip and the floating bars share one stage; the bars dissolve into the pages.
@@ -935,11 +933,4 @@ private fun ZoomableComicPage(source: ComicSource, url: String) {
             )
         }
     }
-}
-
-/** The activity behind this context, whatever wrappers Compose wrapped it in. */
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }

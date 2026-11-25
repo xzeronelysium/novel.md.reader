@@ -1,7 +1,11 @@
 package com.mdreader.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -14,14 +18,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import java.util.Locale
 
 /** The one horizontal margin every screen shares. */
@@ -56,6 +64,38 @@ object ComicSkin {
 
     /** Chip and outline borders on black. */
     val LineSoft = Color(0x59FFFFFF)
+}
+
+/**
+ * The system bars for a comic screen: black stage in both themes, so the status and navigation
+ * icons read as paper while it shows, and hand the appearance back to the theme on leave.
+ */
+@Composable
+fun ComicSystemBars() {
+    val view = LocalView.current
+    val context = LocalContext.current
+    val dark = isSystemInDarkTheme()
+    DisposableEffect(view, context, dark) {
+        val window = context.findActivity()?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = false
+            controller.isAppearanceLightNavigationBars = false
+            onDispose {
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+        } else {
+            onDispose { }
+        }
+    }
+}
+
+/** The activity behind this context, whatever wrappers Compose wrapped it in. */
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 /** Small uppercase metadata, the Swiss label of the layout. */
