@@ -197,6 +197,20 @@ fun LibraryScreen(
                         }
                     }
 
+                    // The last few reading sessions — novels and comics together, newest first —
+                    // under the lead card, above the shelf.
+                    if (query.isBlank()) {
+                        val history = projects
+                            .mapNotNull { p -> progressOf(p.id)?.let { p to it } }
+                            .sortedByDescending { it.second.updatedAt }
+                            .drop(if (lead != null) 1 else 0)
+                            .take(5)
+                        if (history.isNotEmpty()) {
+                            Spacer(Modifier.height(20.dp))
+                            HistorySection(history = history, onOpen = onOpen)
+                        }
+                    }
+
                     ShelfBar(
                         total = projects.size,
                         shown = shown.size,
@@ -502,6 +516,55 @@ private fun SortSegments(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
+        }
+    }
+}
+
+/**
+ * The last few reading sessions, novels and comics side by side: name, chapter and percent,
+ * how long ago. Tapping one opens it where it was left.
+ */
+@Composable
+private fun HistorySection(history: List<Pair<Project, Progress>>, onOpen: (Project) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val now = System.currentTimeMillis()
+    Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
+        Micro(text = "History")
+        Spacer(Modifier.height(6.dp))
+        Hairline()
+        history.forEachIndexed { position, (project, progress) ->
+            val total = project.chapters.size.coerceAtLeast(1)
+            val chapter = (progress.chapterIndex + 1).coerceIn(1, total)
+            val percent = (chapter * 100 / total).coerceIn(1, 100)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpen(project) }
+                    .padding(vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = (position + 1).toString().padStart(2, '0'),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    modifier = Modifier
+                        .width(INDEX_COLUMN)
+                        .padding(top = 3.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = project.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = scheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Micro(text = "Ch. ${chapter.toString().padStart(2, '0')} · $percent%", accent = true)
+                }
+                Micro(text = ageLabel(now, progress.updatedAt))
+            }
+            if (position < history.lastIndex) Hairline()
         }
     }
 }

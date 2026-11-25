@@ -365,7 +365,9 @@ fun MDReaderApp() {
                     )
                     val chapters = chapterD.await()
                     val project = Project(
-                        id = saved?.id ?: UUID.randomUUID().toString(),
+                        // A comic's identity is its source and path, so reading memory survives
+                        // an open that never touched the Add to library button.
+                        id = saved?.id ?: stableComicId(source.id, hit.path),
                         name = details.title,
                         treeUri = "",
                         chapters = chapters.map { Chapter(name = it.title, uri = it.path, remote = true) },
@@ -424,6 +426,18 @@ fun MDReaderApp() {
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Reading is remembering: a comic joins the library the moment you open its reader, so the
+     * shelf, the history and the saved position all have something to hold.
+     */
+    fun rememberComicReading(project: Project, inLibrary: Boolean) {
+        if (inLibrary) return
+        scope.launch {
+            withContext(Dispatchers.IO) { store.addOrReplace(project) }
+            projects = withContext(Dispatchers.IO) { store.load() }
         }
     }
 
@@ -497,9 +511,9 @@ fun MDReaderApp() {
                 comicReading = null
             },
             onProgress = { progress ->
-                scope.launch(Dispatchers.IO) {
-                    store.find(reading.id)?.let { store.setProgress(it.id, progress) }
-                }
+                // Saved whether or not the shelf write has landed: a comic's reading position
+                // is remembered from the first page turned.
+                scope.launch(Dispatchers.IO) { store.setProgress(reading.id, progress) }
             },
         )
     } else if (comicDetail != null) {
@@ -513,12 +527,14 @@ fun MDReaderApp() {
             },
             onRead = { index ->
                 page.project?.let { project ->
+                    rememberComicReading(project, page.inLibrary)
                     comicStart = Progress(chapterIndex = index)
                     comicReading = project
                 }
             },
             onContinue = {
                 page.project?.let { project ->
+                    rememberComicReading(project, page.inLibrary)
                     comicStart = store.progress(project.id)?.remapTo(project.chapters)
                     comicReading = project
                 }
@@ -713,6 +729,10 @@ fun MDReaderApp() {
  * Re-reads a comic's chapter list from its source and stores it, keeping the same project id so
  * the saved reading position still points at the same chapter path.
  */
+/** A comic's shelf identity is its source and path, so reading memory finds it again. */
+private fun stableComicId(sourceId: String, path: String): String =
+    UUID.nameUUIDFromBytes("comic|$sourceId|$path".toByteArray()).toString()
+
 private suspend fun refreshComicChapters(
     project: Project,
     store: LibraryStore,

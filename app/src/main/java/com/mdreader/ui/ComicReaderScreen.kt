@@ -14,6 +14,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,6 +68,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -287,37 +289,62 @@ fun ComicReaderScreen(
                         ComicPage(source = source, url = url, onDoubleTap = { zoomPage = pageIndex })
                     }
                     item(key = "end") {
+                        // The chapter's sign-off: a vermilion tick, the issue number, and the
+                        // step buttons as real controls — ghost for back, filled paper for next.
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = ScreenPad)
-                                .padding(top = 34.dp, bottom = 118.dp),
+                                .padding(top = 30.dp, bottom = 118.dp)
+                                .padding(horizontal = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Micro(text = "End of chapter", color = ComicSkin.Sub)
-                            }
-                            Spacer(Modifier.height(14.dp))
-                            Row {
+                            Box(Modifier.width(28.dp).height(2.dp).background(ComicSkin.Accent))
+                            Spacer(Modifier.height(16.dp))
+                            Micro(text = "Chapter ${(index + 1).toString().padStart(3, '0')}", color = ComicSkin.Sub)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "End of chapter",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = ComicSkin.Ink,
+                            )
+                            Spacer(Modifier.height(22.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
                                 if (index > 0) {
-                                    Text(
-                                        text = "PREVIOUS",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = ComicSkin.Sub,
+                                    Box(
                                         modifier = Modifier
+                                            .weight(1f)
+                                            .border(1.dp, ComicSkin.LineSoft)
                                             .clickable { goTo(index - 1) }
-                                            .padding(vertical = 8.dp, horizontal = 2.dp),
-                                    )
+                                            .padding(vertical = 15.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            text = "PREVIOUS",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = ComicSkin.Sub,
+                                        )
+                                    }
                                 }
-                                Spacer(Modifier.weight(1f))
                                 if (index < chapters.lastIndex) {
-                                    Text(
-                                        text = "NEXT CHAPTER",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = ComicSkin.Accent,
+                                    Box(
                                         modifier = Modifier
+                                            .weight(1f)
+                                            .background(ComicSkin.Ink)
                                             .clickable { goTo(index + 1) }
-                                            .padding(vertical = 8.dp, horizontal = 2.dp),
-                                    )
+                                            .padding(vertical = 15.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            text = "NEXT CHAPTER",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = ComicSkin.Stage,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                    }
                                 }
                             }
                         }
