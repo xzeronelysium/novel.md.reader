@@ -1,9 +1,19 @@
 package com.mdreader.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,8 +27,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -26,9 +38,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,15 +52,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
@@ -58,7 +80,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,6 +109,7 @@ fun ComicReaderScreen(
     var error by remember(project.id) { mutableStateOf<String?>(null) }
     var attempt by remember(project.id) { mutableIntStateOf(0) }
     var showChapters by remember { mutableStateOf(false) }
+    var zoomPage by remember { mutableStateOf<Int?>(null) }
     var pendingPage by remember(project.id) { mutableStateOf(start?.scrollIndex) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -148,10 +170,9 @@ fun ComicReaderScreen(
     // list and its first pages too, so NEXT lands already loaded.
     LaunchedEffect(pages, index, firstPage) {
         if (pages.isEmpty()) return@LaunchedEffect
-        delay(150)
         val page = firstPage
         coroutineScope {
-            (page + 1..minOf(page + 5, pages.lastIndex)).forEach { i ->
+            (page + 1..minOf(page + 8, pages.lastIndex)).forEach { i ->
                 pages.getOrNull(i)?.let { url ->
                     launch { ComicCache.bitmap(context, source, url, 1440) }
                 }
@@ -163,7 +184,7 @@ fun ComicReaderScreen(
                     .getOrNull()
                     .orEmpty()
                 coroutineScope {
-                    nextPages.take(3).forEach { url ->
+                    nextPages.take(5).forEach { url ->
                         launch { ComicCache.bitmap(context, source, url, 1440) }
                     }
                 }
@@ -189,7 +210,22 @@ fun ComicReaderScreen(
         index = clamped
     }
 
-    BackHandler { leave() }
+    // The reader can force landscape for wide panels; leaving hands the choice back to the system.
+    val activityContext = LocalContext.current
+    var landscape by rememberSaveable(project.id) { mutableStateOf(false) }
+    LaunchedEffect(landscape) {
+        activityContext.findActivity()?.requestedOrientation =
+            if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    }
+    DisposableEffect(project.id) {
+        onDispose {
+            activityContext.findActivity()?.requestedOrientation =
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    BackHandler(enabled = zoomPage == null) { leave() }
 
     // The strip and the floating bars share one stage; the bars dissolve into the pages.
     Box(
@@ -247,8 +283,8 @@ fun ComicReaderScreen(
                             Micro(text = "${pages.size} pages · vertical strip", color = ComicSkin.Sub)
                         }
                     }
-                    items(pages) { url ->
-                        ComicPage(source = source, url = url)
+                    itemsIndexed(pages) { pageIndex, url ->
+                        ComicPage(source = source, url = url, onDoubleTap = { zoomPage = pageIndex })
                     }
                     item(key = "end") {
                         Column(
@@ -330,6 +366,40 @@ fun ComicReaderScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                Box(
+                    modifier = Modifier
+                        .clickable(enabled = pages.isNotEmpty()) { zoomPage = firstPage }
+                        .border(1.dp, ComicSkin.LineSoft)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .semantics {
+                            contentDescription = "Zoom into pages"
+                            role = Role.Button
+                        },
+                ) {
+                    Text(
+                        text = "ZOOM",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ComicSkin.Ink,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    modifier = Modifier
+                        .clickable { landscape = !landscape }
+                        .border(1.dp, ComicSkin.LineSoft)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .semantics {
+                            contentDescription = if (landscape) "Back to portrait" else "Rotate to landscape"
+                            role = Role.Button
+                        },
+                ) {
+                    Text(
+                        text = "ROTATE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ComicSkin.Ink,
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
                 Box(
                     modifier = Modifier
                         .clickable(enabled = chapters.isNotEmpty()) { showChapters = true }
@@ -417,6 +487,21 @@ fun ComicReaderScreen(
                 Spacer(Modifier.height(6.dp))
             }
         }
+    }
+
+    // One page at panel size: pinch to zoom, pan, double-tap to step between 1x and 2.5x,
+    // swipe between pages. Closing drops the strip back where the overlay left it.
+    val zooming = zoomPage
+    if (zooming != null && pages.isNotEmpty()) {
+        ComicZoomOverlay(
+            source = source,
+            pages = pages,
+            initialPage = zooming,
+            onClose = { page ->
+                zoomPage = null
+                scope.launch { listState.scrollToItem(page + 1) }
+            },
+        )
     }
 
     if (showChapters) {
@@ -513,4 +598,167 @@ private fun ComicMessage(
             modifier = Modifier.clickable(onClick = onAction).padding(vertical = 8.dp),
         )
     }
+}
+
+/**
+ * The zoom overlay: the chapter's pages in a horizontal pager, one page filling the screen,
+ * pinch to zoom into a panel, pan around, double-tap for 1x / 2.5x. Closing reports the page
+ * last looked at so the strip picks up where the overlay left off.
+ */
+@Composable
+private fun ComicZoomOverlay(
+    source: ComicSource,
+    pages: List<String>,
+    initialPage: Int,
+    onClose: (Int) -> Unit,
+) {
+    val pagerState = rememberPagerState(
+        initialPage = initialPage.coerceIn(0, (pages.size - 1).coerceAtLeast(0)),
+    ) { pages.size }
+    BackHandler { onClose(pagerState.currentPage) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ComicSkin.PageStage),
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
+            ZoomableComicPage(source = source, url = pages[page])
+        }
+
+        // The one bar: close on the left, the page counter on the right.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopStart)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.92f),
+                        0.55f to Color.Black.copy(alpha = 0.5f),
+                        1f to Color.Transparent,
+                    ),
+                ),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .padding(start = 8.dp, end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clickable { onClose(pagerState.currentPage) }
+                        .semantics {
+                            contentDescription = "Close zoom"
+                            role = Role.Button
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "✕",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = ComicSkin.Ink,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                Micro(text = "Page ${pagerState.currentPage + 1} / ${pages.size}", color = ComicSkin.Sub)
+            }
+        }
+    }
+}
+
+/**
+ * One zoomable page. The gesture handler consumes only while zoomed, so a one-finger swipe at
+ * 1x still turns the pager; two fingers pinch anywhere, and the pan is clamped to the page.
+ */
+@Composable
+private fun ZoomableComicPage(source: ComicSource, url: String) {
+    val context = LocalContext.current.applicationContext
+    var image by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(url) {
+        // Panels need real pixels: decode wider than the strip's 1440 for readable zoom.
+        image = ComicCache.bitmap(context, source, url, maxWidth = 2048)
+    }
+    var scale by remember(url) { mutableFloatStateOf(1f) }
+    var offset by remember(url) { mutableStateOf(Offset.Zero) }
+    var bounds by remember(url) { mutableStateOf(IntSize.Zero) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onSizeChanged { bounds = it }
+            .pointerInput(url) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val zoomChange = event.calculateZoom()
+                        val active = scale > 1f || zoomChange != 1f
+                        if (active) {
+                            scale = (scale * zoomChange).coerceIn(1f, 6f)
+                            if (scale > 1f) {
+                                val maxX = bounds.width * (scale - 1f) / 2f
+                                val maxY = bounds.height * (scale - 1f) / 2f
+                                val pan = event.calculatePan()
+                                offset = Offset(
+                                    (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                    (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                )
+                            } else {
+                                offset = Offset.Zero
+                            }
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            }
+            .pointerInput(url) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        if (scale > 1.4f) {
+                            scale = 1f
+                            offset = Offset.Zero
+                        } else {
+                            scale = 2.5f
+                        }
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        val bitmap = image
+        if (bitmap == null) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                color = ComicSkin.Accent,
+                strokeWidth = 1.5.dp,
+            )
+        } else {
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
+            )
+        }
+    }
+}
+
+/** The activity behind this context, whatever wrappers Compose wrapped it in. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

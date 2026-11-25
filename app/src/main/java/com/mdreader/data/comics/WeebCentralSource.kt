@@ -55,6 +55,13 @@ object WeebCentralSource : ComicSource {
 
     override fun imageHeaders(url: String): Map<String, String> = mapOf("Referer" to "$origin/")
 
+    /**
+     * Pages and covers ride the shared OkHttp image pipeline — pooled, HTTP/2 where the host
+     * offers it, eight lanes per host — instead of one fresh connection per image.
+     */
+    override suspend fun imageBytes(url: String): ByteArray? =
+        ComicOkHttp.bytes(url, imageHeaders(url))
+
     /** Page and cover images live on the site and its two image hosts. */
     fun isImageUrl(url: String): Boolean = runCatching {
         val parsed = java.net.URL(url)

@@ -50,6 +50,13 @@ internal object ComicOkHttp {
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
+        // Images load as a burst: eight lanes per host, not OkHttp's default five.
+        .dispatcher(
+            okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 8
+            },
+        )
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)
         .followRedirects(true)

@@ -19,6 +19,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import com.mdreader.data.comics.ComicCache
 import com.mdreader.data.comics.ComicSource
 
@@ -39,13 +41,15 @@ fun rememberComicCover(source: ComicSource?, url: String?): ImageBitmap? {
 
 /**
  * One page of a webtoon: full width, its own height, a quiet placeholder while it downloads.
- * Compose measures the image once decoded, so the strip grows as pages arrive.
+ * Compose measures the image once decoded, so the strip grows as pages arrive. A double-tap
+ * hands the page to the zoom overlay, where panels read at full size.
  */
 @Composable
 fun ComicPage(
     source: ComicSource,
     url: String,
     modifier: Modifier = Modifier,
+    onDoubleTap: () -> Unit = {},
 ) {
     val context = LocalContext.current.applicationContext
     var image by remember(url) { mutableStateOf<ImageBitmap?>(null) }
@@ -56,6 +60,9 @@ fun ComicPage(
         modifier = modifier
             .fillMaxWidth()
             .then(if (image == null) Modifier.height(280.dp) else Modifier)
+            .pointerInput(url) {
+                detectTapGestures(onDoubleTap = { onDoubleTap() })
+            }
             .background(ComicSkin.Panel),
         contentAlignment = Alignment.Center,
     ) {

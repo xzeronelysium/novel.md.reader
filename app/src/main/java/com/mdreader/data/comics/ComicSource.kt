@@ -79,3 +79,15 @@ internal fun ComicSource.looksLikeItsPath(path: String): Boolean = when (id) {
     "batcave" -> path.startsWith("/comix/") || path.startsWith("/reader/")
     else -> false
 }
+
+/**
+ * A cover URL owned by a comic source, or an inline data URI, routed to that source's image
+ * pipeline. The shelf's cover cache is the novel's; this is its comic fallback, so comic covers
+ * load on the shelf instead of dying in the novel fetcher.
+ */
+suspend fun comicCoverBytes(url: String): ByteArray? = when {
+    url.startsWith("data:") -> ComicOkHttp.dataUriBytes(url)
+    WeebCentralSource.isImageUrl(url) -> WeebCentralSource.imageBytes(url)
+    url.startsWith(BatCaveSource.origin) -> BatCaveSource.imageBytes(url)
+    else -> null
+}

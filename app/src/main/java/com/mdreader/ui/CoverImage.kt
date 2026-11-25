@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
+import com.mdreader.data.comics.comicCoverBytes
 import com.mdreader.data.online.FreeWebNovelClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -94,7 +95,7 @@ internal object CoverCache {
             val bytes = if (cached.isFile) {
                 cached.readBytes()
             } else {
-                FreeWebNovelClient.loadCover(url)?.also { bytes ->
+                (FreeWebNovelClient.loadCover(url) ?: comicCoverBytes(url))?.also { bytes ->
                     runCatching {
                         cached.writeBytes(bytes)
                         prune(cached.parentFile!!)
