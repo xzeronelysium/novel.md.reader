@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -75,6 +76,7 @@ import com.mdreader.data.Chapter
 import com.mdreader.data.Progress
 import com.mdreader.data.Project
 import com.mdreader.data.comics.ComicCache
+import com.mdreader.data.comics.ComicStorage
 import com.mdreader.data.comics.ComicException
 import com.mdreader.data.comics.ComicSource
 import com.mdreader.data.remapTo
@@ -82,6 +84,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -876,6 +879,7 @@ private fun ComicZoomOverlay(
 @Composable
 private fun ZoomableComicPage(source: ComicSource, url: String) {
     val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
     var image by remember(url) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(url) {
         // The whole point of the zoom view: true source pixels, every panel at its best.
@@ -884,6 +888,22 @@ private fun ZoomableComicPage(source: ComicSource, url: String) {
     var scale by remember(url) { mutableFloatStateOf(1f) }
     var offset by remember(url) { mutableStateOf(Offset.Zero) }
     var bounds by remember(url) { mutableStateOf(IntSize.Zero) }
+    // Briefly confirms a saved panel on the chip itself.
+    var flash by remember(url) { mutableStateOf<String?>(null) }
+    LaunchedEffect(flash) {
+        if (flash != null) {
+            delay(1600)
+            flash = null
+        }
+    }
+
+    fun saveCurrentPanel() {
+        val bitmap = image ?: return
+        val crop = cropVisible(bitmap.asAndroidBitmap(), scale, offset, bounds) ?: return
+        scope.launch(Dispatchers.IO) {
+            flash = if (ComicStorage.savePanel(context, crop) != null) "SAVED ✓" else "COULDN'T SAVE"
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -954,5 +974,56 @@ private fun ZoomableComicPage(source: ComicSource, url: String) {
                     },
             )
         }
+
+        // Save what the screen shows: a panel framed by pinch, or the whole page at 1x.
+        // It floats clear of the chapter footer and never scales with the artwork.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 78.dp)
+                .background(Color.Black.copy(alpha = 0.55f))
+                .border(1.dp, ComicSkin.LineSoft)
+                .clickable { saveCurrentPanel() }
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .semantics {
+                    contentDescription = "Save this panel to Downloads"
+                    role = Role.Button
+                },
+        ) {
+            Text(
+                text = flash ?: "SAVE PANEL",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (flash == "SAVED ✓") ComicSkin.Accent else ComicSkin.Ink,
+            )
+        }
     }
+}
+
+/**
+ * The slice of the page currently on screen, in true image pixels: the zoom transform walked
+ * backwards from the box's corners into the bitmap, clamped to its edges. At 1x it is the
+ * whole page; pinched in, exactly the framed panel.
+ */
+private fun cropVisible(bitmap: android.graphics.Bitmap, scale: Float, offset: Offset, bounds: IntSize): android.graphics.Bitmap? {
+    if (bounds.width <= 0 || bounds.height <= 0 || scale <= 0f) return null
+    val iw = bitmap.width
+    val ih = bitmap.height
+    if (iw <= 0 || ih <= 0) return null
+    val fit = minOf(bounds.width.toFloat() / iw, bounds.height.toFloat() / ih)
+    val cx = bounds.width / 2f
+    val cy = bounds.height / 2f
+    val leftPad = (bounds.width - iw * fit) / 2f
+    val topPad = (bounds.height - ih * fit) / 2f
+
+    fun imageX(sx: Float): Int = (((sx - offset.x - cx) / scale + cx - leftPad) / fit).toInt()
+    fun imageY(sy: Float): Int = (((sy - offset.y - cy) / scale + cy - topPad) / fit).toInt()
+
+    val left = imageX(0f).coerceIn(0, iw - 1)
+    val right = imageX(bounds.width.toFloat()).coerceIn(left + 1, iw)
+    val top = imageY(0f).coerceIn(0, ih - 1)
+    val bottom = imageY(bounds.height.toFloat()).coerceIn(top + 1, ih)
+    if (right - left < 8 || bottom - top < 8) return null
+    return runCatching {
+        android.graphics.Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+    }.getOrNull()
 }

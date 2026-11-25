@@ -1,9 +1,14 @@
 package com.mdreader.data.comics
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -96,6 +101,31 @@ object ComicStorage {
         "webp" -> "image/webp"
         "gif" -> "image/gif"
         else -> "image/jpeg"
+    }
+
+    /**
+     * One framed panel — or a whole page — to the public Downloads folder, where any file
+     * manager and gallery can see it. Returns the file's name, or null when this Android
+     * version or the store refused it.
+     */
+    fun savePanel(context: Context, panel: Bitmap): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        val name = "mdreader-panel-${System.currentTimeMillis()}.jpg"
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/MD Reader")
+        }
+        val uri = runCatching {
+            context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        }.getOrNull() ?: return null
+        return runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { stream ->
+                panel.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+                stream.flush()
+            }
+            name
+        }.getOrNull()
     }
 
     /**
