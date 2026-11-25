@@ -55,8 +55,14 @@ data class ComicDetailState(
     val sourceId: String? = null,
     val path: String = "",
     val title: String = "",
+    /** The search hit's cover, so the hero renders before details arrive. */
+    val coverUrl: String = "",
     val details: ComicDetails? = null,
     val chapters: List<ComicChapter> = emptyList(),
+    /** True from the moment details render until the chapter list lands. */
+    val chaptersLoading: Boolean = false,
+    /** Why the chapter list failed, when the poster itself is already up. */
+    val chaptersError: String? = null,
     val loading: Boolean = true,
     val error: String? = null,
     val inLibrary: Boolean = false,
@@ -85,7 +91,7 @@ fun ComicDetailScreen(
     val details = state.details
     val source = state.source
     val chapters = state.chapters
-    val coverUrl = details?.cover ?: state.project?.coverUrl.orEmpty()
+    val coverUrl = details?.cover ?: state.coverUrl.ifEmpty { state.project?.coverUrl.orEmpty() }
     val cover = rememberComicCover(source, coverUrl.ifEmpty { null })
     val listState = rememberLazyListState()
 
@@ -349,45 +355,68 @@ fun ComicDetailScreen(
                     Hairline(color = ComicSkin.Line)
                 }
 
-                itemsIndexed(chapters.reversed(), key = { _, chapter -> chapter.path }) { shownIndex, chapter ->
-                    val index = chapters.lastIndex - shownIndex
-                    val resume = state.resumeIndex
-                    val read = resume != null && index < resume
-                    Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onRead(index) }
-                                .padding(vertical = 14.dp),
-                        ) {
-                            Text(
-                                text = "#${(index + 1).toString().padStart(3, '0')}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = ComicSkin.Accent,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.width(48.dp).padding(top = 9.dp),
-                            )
-                            Text(
-                                text = chapter.title,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (read) ComicSkin.Sub else ComicSkin.Ink,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        Hairline(color = ComicSkin.Line)
-                    }
-                }
-
-                if (chapters.isEmpty() && !state.loading) {
+                if (state.chaptersLoading) {
                     item {
                         Text(
-                            text = "This comic has no chapters yet.",
+                            text = "Loading chapters…",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ComicSkin.Sub,
                             modifier = Modifier.padding(horizontal = ScreenPad, vertical = 24.dp),
                         )
+                    }
+                } else {
+                    itemsIndexed(chapters.reversed(), key = { _, chapter -> chapter.path }) { shownIndex, chapter ->
+                        val index = chapters.lastIndex - shownIndex
+                        val resume = state.resumeIndex
+                        val read = resume != null && index < resume
+                        Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onRead(index) }
+                                    .padding(vertical = 14.dp),
+                            ) {
+                                Text(
+                                    text = "#${(index + 1).toString().padStart(3, '0')}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ComicSkin.Accent,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.width(48.dp).padding(top = 9.dp),
+                                )
+                                Text(
+                                    text = chapter.title,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (read) ComicSkin.Sub else ComicSkin.Ink,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Hairline(color = ComicSkin.Line)
+                        }
+                    }
+
+                    if (chapters.isEmpty()) {
+                        item {
+                            Column(modifier = Modifier.padding(horizontal = ScreenPad, vertical = 24.dp)) {
+                                Text(
+                                    text = state.chaptersError ?: "This comic has no chapters yet.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = ComicSkin.Sub,
+                                )
+                                if (state.chaptersError != null) {
+                                    Spacer(Modifier.height(14.dp))
+                                    Text(
+                                        text = "TRY AGAIN",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = ComicSkin.Accent,
+                                        modifier = Modifier
+                                            .clickable(onClick = onRetry)
+                                            .padding(vertical = 8.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 

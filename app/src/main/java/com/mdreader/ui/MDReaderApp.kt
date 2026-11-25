@@ -44,16 +44,23 @@ import com.mdreader.data.summaryIsStale
 import com.mdreader.data.toChapters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 import java.util.UUID
 import com.mdreader.data.importFolder
 import com.mdreader.data.checkOnlineProject
 import com.mdreader.data.refreshOnlineProject
+import com.mdreader.data.comics.ComicCache
+import com.mdreader.data.comics.ComicMemo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** How long a comic's details and chapter list stay fresh in memory within one session. */
+private const val COMIC_MEMO_TTL_MS = 10 * 60 * 1000L
 
 @Composable
 fun MDReaderApp() {
@@ -316,64 +323,106 @@ fun MDReaderApp() {
         }
     }
 
-    /** Opens a comic: details and the full chapter list in one go, then the comic page. */
+    /**
+     * Opens a comic fast: the search hit's cover shows immediately, details and the chapter list
+     * fetch in parallel and render as each lands, everything within the session answers from
+     * [ComicMemo], and the chapter you'd land on starts warming before you tap Read.
+     */
     fun openComic(source: ComicSource, hit: ComicHit) {
         comicDetail = ComicDetailState(
             sourceId = source.id,
             path = hit.path,
             title = hit.title,
+            coverUrl = hit.cover,
             loading = true,
         )
         scope.launch {
             try {
-                val details = withContext(Dispatchers.IO) { source.details(hit.path) }
-                val chapters = withContext(Dispatchers.IO) { source.chapters(hit.path) }
-                val saved = projects.firstOrNull {
-                    it.isComic && it.sourceId == source.id && it.onlinePath == hit.path
+                coroutineScope {
+                    val detailD = async {
+                        ComicMemo.remember("details|${source.id}|${hit.path}", COMIC_MEMO_TTL_MS) {
+                            source.details(hit.path)
+                        }
+                    }
+                    val chapterD = async {
+                        ComicMemo.remember("chapters|${source.id}|${hit.path}", COMIC_MEMO_TTL_MS) {
+                            source.chapters(hit.path)
+                        }
+                    }
+                    val saved = projects.firstOrNull {
+                        it.isComic && it.sourceId == source.id && it.onlinePath == hit.path
+                    }
+                    // The poster renders the moment details arrive; the chapter list fills in behind.
+                    val details = detailD.await()
+                    comicDetail = ComicDetailState(
+                        sourceId = source.id,
+                        path = hit.path,
+                        title = details.title,
+                        details = details,
+                        coverUrl = hit.cover,
+                        chaptersLoading = true,
+                        inLibrary = saved != null,
+                    )
+                    val chapters = chapterD.await()
+                    val project = Project(
+                        id = saved?.id ?: UUID.randomUUID().toString(),
+                        name = details.title,
+                        treeUri = "",
+                        chapters = chapters.map { Chapter(name = it.title, uri = it.path, remote = true) },
+                        importedAt = saved?.importedAt ?: System.currentTimeMillis(),
+                        onlinePath = hit.path,
+                        totalChapters = chapters.size,
+                        coverUrl = details.cover.ifEmpty { hit.cover }.ifEmpty { null },
+                        author = details.author,
+                        status = details.status,
+                        synopsis = details.description,
+                        genres = details.genres,
+                        summaryAt = System.currentTimeMillis(),
+                        kind = ProjectKind.COMIC,
+                        sourceId = source.id,
+                    )
+                    val resume = saved?.let {
+                        store.progress(it.id)?.remapTo(project.chapters)?.chapterIndex
+                    }
+                    comicDetail = ComicDetailState(
+                        sourceId = source.id,
+                        path = hit.path,
+                        title = details.title,
+                        details = details,
+                        chapters = chapters,
+                        coverUrl = hit.cover,
+                        loading = false,
+                        inLibrary = saved != null,
+                        project = project,
+                        resumeIndex = resume,
+                    )
+                    // Warm the chapter Continue or Read lands on, so the reader opens loaded.
+                    project.chapters.getOrNull(resume ?: 0)?.let { first ->
+                        scope.launch(Dispatchers.IO) {
+                            runCatching { ComicCache.pages(context, source, first.uri) }
+                        }
+                    }
                 }
-                val project = Project(
-                    id = saved?.id ?: UUID.randomUUID().toString(),
-                    name = details.title,
-                    treeUri = "",
-                    chapters = chapters.map { Chapter(name = it.title, uri = it.path, remote = true) },
-                    importedAt = saved?.importedAt ?: System.currentTimeMillis(),
-                    onlinePath = hit.path,
-                    totalChapters = chapters.size,
-                    coverUrl = details.cover.ifEmpty { hit.cover }.ifEmpty { null },
-                    author = details.author,
-                    status = details.status,
-                    synopsis = details.description,
-                    genres = details.genres,
-                    summaryAt = System.currentTimeMillis(),
-                    kind = ProjectKind.COMIC,
-                    sourceId = source.id,
-                )
-                val resume = saved?.let {
-                    store.progress(it.id)?.remapTo(project.chapters)?.chapterIndex
-                }
-                comicDetail = ComicDetailState(
-                    sourceId = source.id,
-                    path = hit.path,
-                    title = details.title,
-                    details = details,
-                    chapters = chapters,
-                    loading = false,
-                    inLibrary = saved != null,
-                    project = project,
-                    resumeIndex = resume,
-                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                comicDetail = ComicDetailState(
-                    sourceId = source.id,
-                    path = hit.path,
-                    title = hit.title,
-                    loading = false,
-                    error = (e as? ComicException)?.message
-                        ?: (e as? ComicChallengeException)?.message
-                        ?: "Couldn't load that comic.",
-                )
+                val message = (e as? ComicException)?.message
+                    ?: (e as? ComicChallengeException)?.message
+                    ?: "Couldn't load that comic."
+                val partial = comicDetail
+                comicDetail = if (partial?.details != null) {
+                    // The poster is up; only the chapter list failed, so keep what's showing.
+                    partial.copy(chaptersLoading = false, chaptersError = message)
+                } else {
+                    ComicDetailState(
+                        sourceId = source.id,
+                        path = hit.path,
+                        title = hit.title,
+                        coverUrl = hit.cover,
+                        loading = false,
+                        error = message,
+                    )
+                }
             }
         }
     }

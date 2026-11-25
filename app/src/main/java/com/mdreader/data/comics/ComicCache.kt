@@ -7,10 +7,13 @@ import android.util.LruCache
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Mihon's chapter cache, reduced to what the reader needs: page lists live for an hour (the site
@@ -35,27 +38,50 @@ internal object ComicCache {
         MessageDigest.getInstance("SHA-1").digest(value.toByteArray())
             .joinToString("") { "%02x".format(it) }
 
+    /** One chapter-list fetch at a time: the reader and the prefetch share a flight, not a site hit. */
+    private val pageFlights = ConcurrentHashMap<String, CompletableDeferred<List<String>>>()
+
+    /** One image fetch at a time per URL+width; a restarted warm shares the flight. */
+    private val bitmapFlights = ConcurrentHashMap<String, CompletableDeferred<ImageBitmap?>>()
+
     /** Page image URLs for a chapter, from disk when fresh, otherwise from the source. */
     suspend fun pages(context: Context, source: ComicSource, chapterPath: String): List<String> {
         val file = File(root(context, "pages"), key("${source.id}|$chapterPath") + ".txt")
         val cached = withContext(Dispatchers.IO) { readPages(file) }
         if (cached != null) return cached
 
-        val pages = source.pages(chapterPath)
-        withContext(Dispatchers.IO) {
-            val temp = File(file.parentFile, file.name + ".tmp")
-            temp.writeText(
-                buildString {
-                    appendLine(System.currentTimeMillis() + PAGE_TTL_MS)
-                    pages.forEach { appendLine(it) }
-                },
-            )
-            if (!temp.renameTo(file)) {
-                file.writeText(temp.readText())
-                temp.delete()
+        val flightKey = "${source.id}|$chapterPath"
+        val mine = CompletableDeferred<List<String>>()
+        val running = pageFlights.putIfAbsent(flightKey, mine)
+        if (running != null) return running.await()
+
+        try {
+            // NonCancellable: a cancelled warmer must not strand whoever else joined this flight.
+            val pages = withContext(NonCancellable) {
+                val fetched = source.pages(chapterPath)
+                withContext(Dispatchers.IO) {
+                    val temp = File(file.parentFile, file.name + ".tmp")
+                    temp.writeText(
+                        buildString {
+                            appendLine(System.currentTimeMillis() + PAGE_TTL_MS)
+                            fetched.forEach { appendLine(it) }
+                        },
+                    )
+                    if (!temp.renameTo(file)) {
+                        file.writeText(temp.readText())
+                        temp.delete()
+                    }
+                }
+                fetched
             }
+            pageFlights.remove(flightKey)
+            mine.complete(pages)
+            return pages
+        } catch (e: Throwable) {
+            pageFlights.remove(flightKey)
+            mine.completeExceptionally(e)
+            throw e
         }
-        return pages
     }
 
     private fun readPages(file: File): List<String>? {
@@ -70,7 +96,8 @@ internal object ComicCache {
 
     /**
      * One page or cover, decoded at no more than [maxWidth] pixels wide. Disk first (a day), then
-     * the source; a failed decode or download returns null so the reader can show a placeholder.
+     * the source; concurrent callers share one flight, a failed decode or download returns null so
+     * the reader can show a placeholder.
      */
     suspend fun bitmap(
         context: Context,
@@ -80,19 +107,34 @@ internal object ComicCache {
     ): ImageBitmap? {
         val cacheKey = "$url@$maxWidth"
         memory.get(cacheKey)?.let { return it }
-        val file = File(root(context, "images"), key(url))
-        return withContext(Dispatchers.IO) {
-            val fresh = file.isFile && System.currentTimeMillis() - file.lastModified() < IMAGE_TTL_MS
-            val bytes = when {
-                fresh -> runCatching { file.readBytes() }.getOrNull()
-                else -> source.imageBytes(url)?.also { downloaded ->
-                    runCatching {
-                        file.writeBytes(downloaded)
-                        prune(file.parentFile!!)
+        val mine = CompletableDeferred<ImageBitmap?>()
+        val running = bitmapFlights.putIfAbsent(cacheKey, mine)
+        if (running != null) return running.await()
+
+        try {
+            // NonCancellable: a fling that restarts the warm window must not strand a visible
+            // page waiting on this flight — the download finishes and lands in the caches.
+            val bitmap = withContext(NonCancellable + Dispatchers.IO) {
+                val file = File(root(context, "images"), key(url))
+                val fresh = file.isFile && System.currentTimeMillis() - file.lastModified() < IMAGE_TTL_MS
+                val bytes = when {
+                    fresh -> runCatching { file.readBytes() }.getOrNull()
+                    else -> source.imageBytes(url)?.also { downloaded ->
+                        runCatching {
+                            file.writeBytes(downloaded)
+                            prune(file.parentFile!!)
+                        }
                     }
                 }
+                bytes?.let { decode(it, maxWidth) }?.asImageBitmap()?.also { memory.put(cacheKey, it) }
             }
-            bytes?.let { decode(it, maxWidth) }?.asImageBitmap()?.also { memory.put(cacheKey, it) }
+            bitmapFlights.remove(cacheKey)
+            mine.complete(bitmap)
+            return bitmap
+        } catch (e: Throwable) {
+            bitmapFlights.remove(cacheKey)
+            mine.completeExceptionally(e)
+            throw e
         }
     }
 

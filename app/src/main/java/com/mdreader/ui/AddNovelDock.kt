@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mdreader.data.comics.ComicHit
+import com.mdreader.data.comics.ComicMemo
 import com.mdreader.data.comics.ComicSource
 import com.mdreader.data.comics.ComicSources
 import com.mdreader.data.online.FreeWebNovelClient
@@ -95,6 +96,14 @@ private sealed interface DockState {
 private const val MIN_QUERY = 3
 private const val TYPING_PAUSE_MS = 500L
 
+/** Retyping the same search in the dock answers from memory; sites don't need to see it twice. */
+private const val SEARCH_TTL_MS = 3 * 60 * 1000L
+
+/** One memoized comic search, shared by the typing search and the list's next-page load. */
+private suspend fun comicSearch(source: ComicSource, term: String, page: Int): List<ComicHit> =
+    ComicMemo.remember("search|${source.id}|$term|$page", SEARCH_TTL_MS) { source.search(term, page) }
+        .hits
+
 /**
  * The library's one way in: a field pinned to the bottom that searches while you type, over the
  * novel source or one of the two comic sources. Results open details; nothing is saved until you
@@ -124,7 +133,7 @@ fun AddNovelDock(
                 DockSource.Novel -> FreeWebNovelClient.search(term, page).map { DockHit.Novel(it) }
                 else -> {
                     val source = ComicSources.byId(scope.comicId) ?: return
-                    source.search(term, page).hits.map { DockHit.Comic(source, it) }
+                    comicSearch(source, term, page).map { DockHit.Comic(source, it) }
                 }
             }
         } catch (e: CancellationException) {
@@ -159,7 +168,7 @@ fun AddNovelDock(
                 DockSource.Novel -> FreeWebNovelClient.search(term, 1).map { DockHit.Novel(it) }
                 else -> {
                     val source = ComicSources.byId(scope.comicId)!!
-                    source.search(term, 1).hits.map { DockHit.Comic(source, it) }
+                    comicSearch(source, term, 1).map { DockHit.Comic(source, it) }
                 }
             }
             DockState.Results(hits, page = 1, more = hits.isNotEmpty())

@@ -57,6 +57,7 @@ import com.mdreader.data.remapTo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
@@ -143,17 +144,29 @@ fun ComicReaderScreen(
             }
     }
 
-    // Warm the next couple of pages, and the next chapter's page list near the end.
-    LaunchedEffect(pages, index) {
+    // Warm a window ahead of the screen, in parallel, and near the end the next chapter's page
+    // list and its first pages too, so NEXT lands already loaded.
+    LaunchedEffect(pages, index, firstPage) {
         if (pages.isEmpty()) return@LaunchedEffect
-        delay(400)
+        delay(150)
         val page = firstPage
-        (page..(page + 2)).forEach { i ->
-            pages.getOrNull(i)?.let { url -> ComicCache.bitmap(context, source, url, 1440) }
+        coroutineScope {
+            (page + 1..minOf(page + 5, pages.lastIndex)).forEach { i ->
+                pages.getOrNull(i)?.let { url ->
+                    launch { ComicCache.bitmap(context, source, url, 1440) }
+                }
+            }
         }
         if (page >= pages.lastIndex - 2) {
             chapters.getOrNull(index + 1)?.let { next ->
-                runCatching { ComicCache.pages(context, source, next.uri) }
+                val nextPages = runCatching { ComicCache.pages(context, source, next.uri) }
+                    .getOrNull()
+                    .orEmpty()
+                coroutineScope {
+                    nextPages.take(3).forEach { url ->
+                        launch { ComicCache.bitmap(context, source, url, 1440) }
+                    }
+                }
             }
         }
     }
