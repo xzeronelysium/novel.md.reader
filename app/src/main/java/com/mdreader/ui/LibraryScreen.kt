@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,21 +26,26 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,7 +71,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.LaunchedEffect
@@ -81,8 +86,10 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import com.mdreader.data.LibrarySort
+import com.mdreader.data.ReadingHistory
 import com.mdreader.data.ageLabel
 import com.mdreader.data.matching
+import com.mdreader.data.comics.ComicSources
 import com.mdreader.data.ordered
 import com.mdreader.data.Progress
 
@@ -103,6 +110,9 @@ data class LibraryCheck(
 fun LibraryScreen(
     projects: List<Project>,
     progressOf: (String) -> Progress?,
+    history: List<ReadingHistory>,
+    onOpenHistory: (ReadingHistory) -> Unit,
+    onClearHistory: () -> Unit,
     loading: Boolean,
     importing: Boolean,
     snackbarHostState: SnackbarHostState,
@@ -118,6 +128,7 @@ fun LibraryScreen(
 ) {
     var pendingRemoval by remember { mutableStateOf<Project?>(null) }
     var searchActive by rememberSaveable { mutableStateOf(false) }
+    var historyOpen by remember { mutableStateOf(false) }
     var sort by rememberSaveable { mutableStateOf(LibrarySort.Updated) }
     var findOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -145,7 +156,7 @@ fun LibraryScreen(
                 )
             }
 
-            LibraryHeader(novelCount = projects.size)
+            LibraryHeader(novelCount = projects.size, onHistory = { historyOpen = true })
 
             Spacer(Modifier.height(32.dp))
 
@@ -194,20 +205,6 @@ fun LibraryScreen(
                                     onRemove = { pendingRemoval = lead.first },
                                 )
                             }
-                        }
-                    }
-
-                    // The last few reading sessions — novels and comics together, newest first —
-                    // under the lead card, above the shelf.
-                    if (query.isBlank()) {
-                        val history = projects
-                            .mapNotNull { p -> progressOf(p.id)?.let { p to it } }
-                            .sortedByDescending { it.second.updatedAt }
-                            .drop(if (lead != null) 1 else 0)
-                            .take(5)
-                        if (history.isNotEmpty()) {
-                            Spacer(Modifier.height(20.dp))
-                            HistorySection(history = history, onOpen = onOpen)
                         }
                     }
 
@@ -325,6 +322,18 @@ fun LibraryScreen(
         }
     }
 
+    if (historyOpen) {
+        HistorySheet(
+            history = history,
+            onOpen = {
+                historyOpen = false
+                onOpenHistory(it)
+            },
+            onClear = onClearHistory,
+            onDismiss = { historyOpen = false },
+        )
+    }
+
     val removalTarget = pendingRemoval
     if (removalTarget != null) {
         RemoveDialog(
@@ -340,7 +349,7 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun LibraryHeader(novelCount: Int) {
+private fun LibraryHeader(novelCount: Int, onHistory: () -> Unit) {
     Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
         Spacer(Modifier.height(16.dp))
 
@@ -359,7 +368,21 @@ private fun LibraryHeader(novelCount: Int) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            Micro(text = "${novelCount.toString().padStart(2, '0')} titles")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Micro(text = "${novelCount.toString().padStart(2, '0')} titles")
+                Spacer(Modifier.width(16.dp))
+                Micro(
+                    text = "History",
+                    accent = true,
+                    modifier = Modifier
+                        .clickable(onClick = onHistory)
+                        .padding(vertical = 4.dp)
+                        .semantics {
+                            contentDescription = "Open reading history"
+                            role = Role.Button
+                        },
+                )
+            }
         }
 
         Spacer(Modifier.height(32.dp))
@@ -521,51 +544,119 @@ private fun SortSegments(sort: LibrarySort, onSort: (LibrarySort) -> Unit) {
 }
 
 /**
- * The last few reading sessions, novels and comics side by side: name, chapter and percent,
- * how long ago. Tapping one opens it where it was left.
+ * Reading history in a sheet: every session — shelf or search-read — newest first, with where
+ * it stopped and how long ago. Tapping reopens it; the footer clears the lot.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HistorySection(history: List<Pair<Project, Progress>>, onOpen: (Project) -> Unit) {
+private fun HistorySheet(
+    history: List<ReadingHistory>,
+    onOpen: (ReadingHistory) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
-    val now = System.currentTimeMillis()
-    Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
-        Micro(text = "History")
-        Spacer(Modifier.height(6.dp))
-        Hairline()
-        history.forEachIndexed { position, (project, progress) ->
-            val total = project.chapters.size.coerceAtLeast(1)
-            val chapter = (progress.chapterIndex + 1).coerceIn(1, total)
-            val percent = (chapter * 100 / total).coerceIn(1, 100)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RectangleShape,
+        containerColor = scheme.surfaceContainer,
+        scrimColor = scheme.scrim.copy(alpha = 0.32f),
+        tonalElevation = 0.dp,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onOpen(project) }
-                    .padding(vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = ScreenPad, vertical = 20.dp),
+                verticalAlignment = Alignment.Bottom,
             ) {
                 Text(
-                    text = (position + 1).toString().padStart(2, '0'),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = scheme.onSurfaceVariant.copy(alpha = 0.75f),
-                    modifier = Modifier
-                        .width(INDEX_COLUMN)
-                        .padding(top = 3.dp),
+                    text = "History",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = scheme.onSurface,
+                    modifier = Modifier.weight(1f),
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = project.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = scheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Micro(text = "Ch. ${chapter.toString().padStart(2, '0')} · $percent%", accent = true)
-                }
-                Micro(text = ageLabel(now, progress.updatedAt))
+                Micro(text = "${history.size} read")
             }
-            if (position < history.lastIndex) Hairline()
+            Hairline()
+            if (history.isEmpty()) {
+                Text(
+                    text = "Nothing read yet. Anything you open from search lands here too, " +
+                        "even before it joins the library.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = ScreenPad, vertical = 26.dp),
+                )
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                    items(history.asReversed(), key = { it.id }) { entry ->
+                        HistoryRow(entry = entry, onClick = { onOpen(entry) })
+                    }
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clickable(onClick = onClear)
+                                .semantics {
+                                    contentDescription = "Clear history"
+                                    role = Role.Button
+                                },
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Micro(text = "Clear history", color = scheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+/** One remembered session: title, chapter and percent, the comic source when there is one. */
+@Composable
+private fun HistoryRow(entry: ReadingHistory, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val now = System.currentTimeMillis()
+    val chapter = (entry.chapterIndex + 1).coerceAtLeast(1)
+    val source = entry.sourceId?.let { ComicSources.byId(it) }
+    Column(modifier = Modifier.padding(horizontal = ScreenPad)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = scheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Micro(
+                        text = when {
+                            entry.totalChapters > 0 ->
+                                "Ch. ${chapter.toString().padStart(2, '0')} · " +
+                                    "${(chapter * 100 / entry.totalChapters).coerceIn(1, 100)}%"
+                            else -> "Ch. ${chapter.toString().padStart(2, '0')}"
+                        },
+                    )
+                    if (source != null) {
+                        Spacer(Modifier.width(8.dp))
+                        Micro(text = source.name, color = scheme.primary)
+                    }
+                }
+            }
+            Micro(text = ageLabel(now, entry.updatedAt))
+        }
+        Hairline()
     }
 }
 

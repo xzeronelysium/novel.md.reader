@@ -19,8 +19,11 @@ class LibraryStore(private val filesDir: File) {
 
     private val libraryFile = File(filesDir, "library.json")
     private val progressFile = File(filesDir, "progress.json")
+    private val historyFile = File(filesDir, "history.json")
     private val projects = mutableListOf<Project>()
     private val progressById = mutableMapOf<String, Progress>()
+    /** Insertion-ordered: the most recent reading session is the last one in. */
+    private val historyById = LinkedHashMap<String, ReadingHistory>()
     private var loaded = false
     private var textSizeLevel = 1
 
@@ -96,6 +99,31 @@ class LibraryStore(private val filesDir: File) {
         persistProgress()
     }
 
+    /** Every session ever read, newest last; shelf entries and search-reads alike. */
+    @Synchronized
+    fun history(): List<ReadingHistory> {
+        ensureLoaded()
+        return historyById.values.toList()
+    }
+
+    /** Upserts one reading session, newest last, and forgets all but the last thirty. */
+    @Synchronized
+    fun recordHistory(entry: ReadingHistory) {
+        ensureLoaded()
+        historyById.remove(entry.id)
+        historyById[entry.id] = entry.copy(updatedAt = System.currentTimeMillis())
+        while (historyById.size > 30) historyById.remove(historyById.keys.first())
+        persistHistory()
+    }
+
+    @Synchronized
+    fun clearHistory() {
+        ensureLoaded()
+        if (historyById.isEmpty()) return
+        historyById.clear()
+        persistHistory()
+    }
+
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
@@ -133,6 +161,35 @@ class LibraryStore(private val filesDir: File) {
                 val moved = runCatching { persistProgress() }.isSuccess && progressFile.isFile
                 // Only then drop the old block, and only if the new one really is on disk.
                 if (moved) runCatching { persistLibrary() }
+            }
+        }
+
+        historyFile.takeIf { it.isFile }?.let { file ->
+            runCatching {
+                val root = JSONObject(file.readText())
+                val entries = root.optJSONArray("history") ?: JSONArray()
+                for (i in 0 until entries.length()) {
+                    runCatching {
+                        val item = entries.getJSONObject(i)
+                        val entry = ReadingHistory(
+                            id = item.getString("id"),
+                            kind = if (item.optString("kind") == "COMIC") ProjectKind.COMIC else ProjectKind.NOVEL,
+                            sourceId = item.optString("sourceId").ifEmpty { null },
+                            onlinePath = item.optString("onlinePath"),
+                            title = item.optString("title"),
+                            coverUrl = item.optString("coverUrl").ifEmpty { null },
+                            totalChapters = item.optInt("totalChapters", 0),
+                            chapterIndex = item.optInt("chapterIndex", 0),
+                            chapterKey = item.optString("chapterKey").ifEmpty { null },
+                            scrollIndex = item.optInt("scrollIndex", 0),
+                            updatedAt = item.optLong("updatedAt", 0L),
+                        )
+                        if (entry.onlinePath.isNotEmpty() && entry.title.isNotEmpty()) {
+                            historyById.remove(entry.id)
+                            historyById[entry.id] = entry
+                        }
+                    }
+                }
             }
         }
     }
@@ -236,6 +293,27 @@ class LibraryStore(private val filesDir: File) {
     }
 
     /** Position and text size: small and written on every scroll pause. */
+    private fun persistHistory() {
+        val historyArray = JSONArray()
+        historyById.values.forEach { entry ->
+            historyArray.put(
+                JSONObject()
+                    .put("id", entry.id)
+                    .put("kind", if (entry.kind == ProjectKind.COMIC) "COMIC" else "NOVEL")
+                    .apply { entry.sourceId?.let { put("sourceId", it) } }
+                    .put("onlinePath", entry.onlinePath)
+                    .put("title", entry.title)
+                    .apply { entry.coverUrl?.let { put("coverUrl", it) } }
+                    .put("totalChapters", entry.totalChapters)
+                    .put("chapterIndex", entry.chapterIndex)
+                    .apply { entry.chapterKey?.let { put("chapterKey", it) } }
+                    .put("scrollIndex", entry.scrollIndex)
+                    .put("updatedAt", entry.updatedAt),
+            )
+        }
+        writeAtomically(historyFile, JSONObject().put("history", historyArray).toString())
+    }
+
     private fun persistProgress() {
         val progressObject = JSONObject()
         progressById.forEach { (id, progress) ->

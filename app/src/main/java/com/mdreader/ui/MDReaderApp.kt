@@ -34,6 +34,7 @@ import com.mdreader.data.ImportException
 import com.mdreader.data.LibraryStore
 import com.mdreader.data.Project
 import com.mdreader.data.Progress
+import com.mdreader.data.ReadingHistory
 import com.mdreader.data.remapTo
 import com.mdreader.data.withChapters
 import com.mdreader.data.online.FreeWebNovelClient
@@ -231,6 +232,19 @@ fun MDReaderApp() {
 
     val openProject = preview ?: projects.firstOrNull { it.id == openProjectId }
 
+    // The history list refetches whenever a reader opens or closes, or the shelf changes.
+    var historyTick by remember { mutableStateOf(0) }
+    val history by produceState(
+        emptyList<ReadingHistory>(),
+        projects,
+        comicReading,
+        preview,
+        detailPath,
+        historyTick,
+    ) {
+        value = withContext(Dispatchers.IO) { store.history() }
+    }
+
     fun libraryEntry(path: String) = projects.firstOrNull { it.onlinePath == path }
 
     fun loadDetail(path: String, title: String?) {
@@ -297,7 +311,7 @@ fun MDReaderApp() {
                 )
                 val chapters = novel.chapters.toChapters()
                 val project = Project(
-                    id = UUID.randomUUID().toString(),
+                    id = stableNovelId(path),
                     name = novel.details.title,
                     treeUri = "",
                     chapters = chapters,
@@ -314,7 +328,13 @@ fun MDReaderApp() {
                     votes = novel.details.votes,
                     summaryAt = System.currentTimeMillis(),
                 )
-                detail = NovelDetailState(details = novel.details, project = project, inLibrary = false)
+                detail = NovelDetailState(
+                    details = novel.details,
+                    project = project,
+                    inLibrary = false,
+                    // A search-read novel remembers too: the stable id carries the position.
+                    resumeIndex = store.progress(project.id)?.remapTo(chapters)?.chapterIndex,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -383,9 +403,7 @@ fun MDReaderApp() {
                         kind = ProjectKind.COMIC,
                         sourceId = source.id,
                     )
-                    val resume = saved?.let {
-                        store.progress(it.id)?.remapTo(project.chapters)?.chapterIndex
-                    }
+                    val resume = store.progress(project.id)?.remapTo(project.chapters)?.chapterIndex
                     comicDetail = ComicDetailState(
                         sourceId = source.id,
                         path = hit.path,
@@ -438,6 +456,18 @@ fun MDReaderApp() {
         scope.launch {
             withContext(Dispatchers.IO) { store.addOrReplace(project) }
             projects = withContext(Dispatchers.IO) { store.load() }
+        }
+    }
+
+    /** A history row reopens whatever it was: the comic's source, or the novel's page. */
+    fun openHistory(entry: ReadingHistory) {
+        val source = entry.sourceId?.let { ComicSources.byId(it) }
+        if (source != null) {
+            openComic(source, ComicHit(title = entry.title, path = entry.onlinePath))
+        } else {
+            cameFrom = null
+            detailPath = entry.onlinePath
+            loadDetail(entry.onlinePath, entry.title)
         }
     }
 
@@ -512,8 +542,11 @@ fun MDReaderApp() {
             },
             onProgress = { progress ->
                 // Saved whether or not the shelf write has landed: a comic's reading position
-                // is remembered from the first page turned.
-                scope.launch(Dispatchers.IO) { store.setProgress(reading.id, progress) }
+                // is remembered from the first page turned, and the history row with it.
+                scope.launch(Dispatchers.IO) {
+                    store.setProgress(reading.id, progress)
+                    store.recordHistory(historyOf(reading, progress))
+                }
             },
         )
     } else if (comicDetail != null) {
@@ -652,6 +685,12 @@ fun MDReaderApp() {
         LibraryScreen(
             projects = projects,
             progressOf = { store.progress(it) },
+            history = history,
+            onOpenHistory = ::openHistory,
+            onClearHistory = {
+                scope.launch(Dispatchers.IO) { store.clearHistory() }
+                historyTick++
+            },
             loading = loading,
             importing = importing,
             snackbarHostState = snackbarHostState,
@@ -716,9 +755,11 @@ fun MDReaderApp() {
                 if (detail.inLibrary && detail.project?.id == openProject.id) {
                     detail = detail.copy(resumeIndex = progress.chapterIndex)
                 }
-                // Only novels in the library remember where you were.
+                // Novels remember too: the stable id keeps a search-read's position, and the
+                // history row survives even when the shelf never saw it.
                 scope.launch(Dispatchers.IO) {
-                    if (store.find(openProject.id) != null) store.setProgress(openProject.id, progress)
+                    store.setProgress(openProject.id, progress)
+                    store.recordHistory(historyOf(openProject, progress))
                 }
             },
         )
@@ -732,6 +773,24 @@ fun MDReaderApp() {
 /** A comic's shelf identity is its source and path, so reading memory finds it again. */
 private fun stableComicId(sourceId: String, path: String): String =
     UUID.nameUUIDFromBytes("comic|$sourceId|$path".toByteArray()).toString()
+
+/** A novel read from search carries its path as identity, so it resumes on the next open too. */
+private fun stableNovelId(path: String): String =
+    UUID.nameUUIDFromBytes("novel|$path".toByteArray()).toString()
+
+/** One reading session as history: enough identity to reopen, enough position to resume. */
+private fun historyOf(project: Project, progress: Progress) = ReadingHistory(
+    id = project.id,
+    kind = project.kind,
+    sourceId = project.sourceId,
+    onlinePath = project.onlinePath.orEmpty(),
+    title = project.name,
+    coverUrl = project.coverUrl,
+    totalChapters = project.totalChapters ?: project.chapters.size,
+    chapterIndex = progress.chapterIndex,
+    chapterKey = progress.chapterKey,
+    scrollIndex = progress.scrollIndex,
+)
 
 private suspend fun refreshComicChapters(
     project: Project,

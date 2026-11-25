@@ -112,3 +112,23 @@ fun Progress.remapTo(chapters: List<Chapter>): Progress {
         )
     }
 }
+
+/**
+ * One remembered reading session — shelf or not. Reading anything from search
+ * lands here, so reopening needs only the identity: source, path, title, cover.
+ */
+data class ReadingHistory(
+    val id: String,
+    val kind: ProjectKind,
+    /** The comic source, or null for a novel. */
+    val sourceId: String? = null,
+    /** The series path on its source, for reopening from search. */
+    val onlinePath: String = "",
+    val title: String,
+    val coverUrl: String? = null,
+    val totalChapters: Int = 0,
+    val chapterIndex: Int = 0,
+    val chapterKey: String? = null,
+    val scrollIndex: Int = 0,
+    val updatedAt: Long = 0,
+)
