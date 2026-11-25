@@ -117,9 +117,11 @@ internal object ComicCache {
             val bitmap = withContext(NonCancellable + Dispatchers.IO) {
                 val file = File(root(context, "images"), key(url))
                 val fresh = file.isFile && System.currentTimeMillis() - file.lastModified() < IMAGE_TTL_MS
+                // A fetch that cannot happen — a bad URL, a dead host, a decode the device
+                // can't do — is a placeholder, not a crash.
                 val bytes = when {
                     fresh -> runCatching { file.readBytes() }.getOrNull()
-                    else -> source.imageBytes(url)?.also { downloaded ->
+                    else -> runCatching { source.imageBytes(url) }.getOrNull()?.also { downloaded ->
                         runCatching {
                             file.writeBytes(downloaded)
                             prune(file.parentFile!!)

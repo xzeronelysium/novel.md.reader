@@ -61,8 +61,15 @@ internal object ComicOkHttp {
     suspend fun postJson(url: String, body: String, headers: Map<String, String> = emptyMap()): String =
         execute("POST", url, headers, body, "application/json")
 
+    /**
+     * One image, inline or remote. BatCave serves some covers as `data:image/...;base64,...`
+     * URLs; those decode in place, and anything that is not https answers null instead of
+     * throwing — a bad cover URL must never take the reader down with it.
+     */
     suspend fun bytes(url: String, headers: Map<String, String> = emptyMap()): ByteArray? =
         withContext(Dispatchers.IO) {
+            dataUriBytes(url)?.let { return@withContext it }
+            if (!url.startsWith("https://")) return@withContext null
             val request = baseRequest(url, headers)
                 .header("Sec-Fetch-Dest", "image")
                 .header("Sec-Fetch-Mode", "no-cors")
@@ -78,6 +85,20 @@ internal object ComicOkHttp {
                 }
             }.getOrNull()
         }
+
+    /** Decodes an inline base64 image URI, or null when it is anything else. */
+    internal fun dataUriBytes(url: String): ByteArray? {
+        if (!url.startsWith("data:")) return null
+        return runCatching {
+            val comma = url.indexOf(',')
+            if (comma < 0) return@runCatching null
+            val meta = url.substring(5, comma)
+            val payload = url.substring(comma + 1)
+            val mime = meta.substringBefore(';').lowercase()
+            val base64 = meta.substringAfter(';', "").contains("base64", ignoreCase = true)
+            if (mime.startsWith("image/") && base64) java.util.Base64.getDecoder().decode(payload) else null
+        }.getOrNull()
+    }
 
     private suspend fun execute(
         method: String,

@@ -1,8 +1,10 @@
 package com.mdreader
 
 import com.mdreader.data.comics.BatCaveParser
+import com.mdreader.data.comics.ComicOkHttp
 import com.mdreader.data.comics.WeebCentralParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -155,5 +157,23 @@ class ComicParserTest {
         assertEquals(1, hits.size)
         assertEquals("Some Comic", hits[0].title)
         assertEquals("/comix/4211-some-comic.html", hits[0].path)
+    }
+
+    @Test
+    fun `inline data covers decode to their bytes`() {
+        val png = byteArrayOf(0x01, 0x02, 0x03, 0x04)
+        val uri = "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(png)
+
+        val decoded = ComicOkHttp.dataUriBytes(uri)
+
+        assertTrue(decoded.contentEquals(png))
+    }
+
+    @Test
+    fun `a bad image url answers null, never a crash`() {
+        assertNull(ComicOkHttp.dataUriBytes("data:text/html;base64,SGk="))
+        assertNull(ComicOkHttp.dataUriBytes("data:image/png,not-base64-at-all"))
+        assertNull(ComicOkHttp.dataUriBytes("javascript:alert(1)"))
+        assertNull(ComicOkHttp.dataUriBytes("http://not-even-https.example/cover.jpg"))
     }
 }
