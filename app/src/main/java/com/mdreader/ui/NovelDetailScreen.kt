@@ -1335,7 +1335,7 @@ private fun OutlineButton(
 }
 
 @Composable
-private fun Stat(label: String, value: String, modifier: Modifier = Modifier, accent: Boolean = false) {
+internal fun Stat(label: String, value: String, modifier: Modifier = Modifier, accent: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier = modifier.padding(vertical = 12.dp)) {
         Micro(text = label)
@@ -1584,7 +1584,7 @@ private fun StatPlaceholder(label: String, modifier: Modifier = Modifier) {
 
 /** Flips the chapter list between oldest first and newest first. */
 @Composable
-private fun OrderChip(newestFirst: Boolean, onClick: () -> Unit) {
+internal fun OrderChip(newestFirst: Boolean, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
