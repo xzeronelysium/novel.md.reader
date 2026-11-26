@@ -81,17 +81,23 @@ class ComicParserTest {
     }
 
     @Test
-    fun `kakalot chapters come from the api newest first and read oldest first`() {
+    fun `kakalot chapters page read newest first with its pagination`() {
         val json = """
-            {"success":true,"data":{"chapters":[
-              {"chapter_name":"Chapter 8","chapter_slug":"chapter-8","chapter_num":8,"updated_at":"2026-11-26T04:12:55Z","view":533},
-              {"chapter_name":"Chapter 7","chapter_slug":"chapter-7","chapter_num":7,"updated_at":"2026-11-25T04:12:30Z","view":114}
-            ]}}
+            {"success":true,"data":{
+              "chapters":[
+                {"chapter_name":"Chapter 8","chapter_slug":"chapter-8","chapter_num":8,"updated_at":"2026-11-26T04:12:55Z","view":533},
+                {"chapter_name":"Chapter 7","chapter_slug":"chapter-7","chapter_num":7,"updated_at":"2026-11-25T04:12:30Z","view":114}
+              ],
+              "pagination":{"total":260,"limit":50,"offset":0,"has_more":true}
+            }}
         """.trimIndent()
-        val chapters = MangakakalotParser.parseChaptersApi(json, "the-young-lady")
-        assertEquals(listOf("Chapter 7", "Chapter 8"), chapters.map { it.title })
-        assertEquals("https://www.mangagoku.com/manga/the-young-lady/chapter-7", chapters[0].path)
-        assertEquals("2026-11-25T04:12:30Z", chapters[0].date)
+        val page = MangakakalotParser.parseChapterPage(json, "the-young-lady")
+        assertEquals(listOf("Chapter 8", "Chapter 7"), page.map { it.title })
+        assertEquals("https://www.mangagoku.com/manga/the-young-lady/chapter-8", page[0].path)
+        assertEquals("2026-11-26T04:12:55Z", page[0].date)
+        assertTrue(MangakakalotParser.hasMoreChapters(json))
+        val last = json.replace("\"has_more\":true", "\"has_more\":false")
+        assertTrue(!MangakakalotParser.hasMoreChapters(last))
     }
 
     @Test

@@ -43,12 +43,24 @@ object MangakakalotSource : ComicSource {
 
     /**
      * The series page loads its chapter list through the site's JSON API (the page itself ships
-     * only an empty container); the API answers newest first, so reading order is reversed.
+     * only an empty container). The API serves 50 chapters a page, so every page is walked
+     * until its own pagination says there are no more — a 260-chapter manga is 260 chapters,
+     * not the first fifty.
      */
     override suspend fun chapters(seriesPath: String): List<ComicChapter> {
         val slug = seriesPath.trimEnd('/').substringAfterLast('/')
-        val json = session.get("$origin/api/manga/$slug/chapters", gate)
-        return MangakakalotParser.parseChaptersApi(json, slug)
+        val all = LinkedHashSet<ComicChapter>()
+        var offset = 0
+        do {
+            val json = session.get("$origin/api/manga/$slug/chapters?offset=$offset", gate)
+            val page = MangakakalotParser.parseChapterPage(json, slug)
+            all += page
+            offset += page.size
+        } while (page.isNotEmpty() && MangakakalotParser.hasMoreChapters(json))
+        val chapters = all.toList()
+        if (chapters.isEmpty()) throw ComicException("That manga has no chapters yet.")
+        // The API answers newest first; reading order is oldest first.
+        return chapters.asReversed()
     }
 
     override suspend fun pages(chapterPath: String): List<String> {
@@ -119,26 +131,31 @@ object MangakakalotParser {
         )
     }
 
-    /** The JSON API's answer: chapters newest first, each becoming a satellite reader URL. */
-    fun parseChaptersApi(json: String, slug: String): List<ComicChapter> {
+    /**
+     * One page of the chapters API, newest first exactly as the site serves it.
+     * [hasMoreChapters] reads the same answer's pagination.
+     */
+    fun parseChapterPage(json: String, slug: String): List<ComicChapter> {
         val data = runCatching { JSONObject(json).optJSONObject("data") }.getOrNull()
             ?: throw ComicException("That manga's chapter list came back in an unexpected format.")
         val chapters = data.optJSONArray("chapters")
             ?: throw ComicException("That manga has no chapters yet.")
-        val list = (0 until chapters.length()).mapNotNull { i ->
+        return (0 until chapters.length()).mapNotNull { i ->
             val item = chapters.getJSONObject(i)
-            val slugName = item.optString("chapter_slug")
-            if (slugName.isEmpty()) return@mapNotNull null
+            val chapterSlug = item.optString("chapter_slug")
+            if (chapterSlug.isEmpty()) return@mapNotNull null
             ComicChapter(
                 title = item.optString("chapter_name").ifEmpty { "Chapter ${item.optInt("chapter_num")}" },
-                path = "${MangakakalotSource.SATELLITE_ORIGIN}/manga/$slug/$slugName",
+                path = "${MangakakalotSource.SATELLITE_ORIGIN}/manga/$slug/$chapterSlug",
                 date = item.optString("updated_at"),
             )
         }
-        if (list.isEmpty()) throw ComicException("That manga has no chapters yet.")
-        // The API answers newest first; reading order is oldest first.
-        return list.asReversed()
     }
+
+    fun hasMoreChapters(json: String): Boolean = runCatching {
+        JSONObject(json).optJSONObject("data")?.optJSONObject("pagination")
+            ?.optBoolean("has_more") == true
+    }.getOrDefault(false)
 
     fun parsePages(html: String): List<String> {
         val doc = org.jsoup.Jsoup.parse(html)
