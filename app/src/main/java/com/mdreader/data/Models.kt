@@ -69,7 +69,7 @@ data class Project(
     val summaryAt: Long = 0,
     /** Novel text or comic pages; defaults to NOVEL so older saved libraries keep working. */
     val kind: ProjectKind = ProjectKind.NOVEL,
-    /** Comic source id ("weebcentral", "batcave"); null for novels. */
+    /** Comic source id ("mangakakalot", "batcave"); null for novels. */
     val sourceId: String? = null,
 ) {
     val isOnline: Boolean get() = onlinePath != null

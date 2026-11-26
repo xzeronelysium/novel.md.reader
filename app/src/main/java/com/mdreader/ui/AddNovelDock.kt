@@ -64,7 +64,7 @@ import kotlinx.coroutines.delay
 /** Which site the dock searches: the novel source, or one of the two hardcoded comic sources. */
 enum class DockSource(val label: String, val comicId: String?) {
     Novel("NOVEL", null),
-    Weeb("WEEB", "weebcentral"),
+    Kakalot("KAKALOT", "mangakakalot"),
     Bat("BAT", "batcave"),
 }
 
@@ -360,7 +360,7 @@ private fun SourceRow(scope: DockSource, onScope: (DockSource) -> Unit) {
         Micro(
             text = when (scope) {
                 DockSource.Novel -> "Free Web Novel"
-                DockSource.Weeb -> "Weeb Central"
+                DockSource.Kakalot -> "MangaKakalot"
                 DockSource.Bat -> "BatCave"
             },
         )

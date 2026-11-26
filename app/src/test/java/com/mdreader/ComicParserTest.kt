@@ -2,114 +2,114 @@ package com.mdreader
 
 import com.mdreader.data.comics.BatCaveParser
 import com.mdreader.data.comics.ComicOkHttp
-import com.mdreader.data.comics.WeebCentralParser
+import com.mdreader.data.comics.MangakakalotParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The two comic parsers against excerpts of the real pages (selectors copied from the live HTML,
- * which is also what the Mihon extensions use). Pure functions, no network.
+ * The two comic parsers against excerpts of the real pages, selectors copied from the live
+ * HTML the sources fetched. Pure functions, no network.
  */
 class ComicParserTest {
 
-    private val weebSearch = """
-        <article class="bg-base-300 flex gap-4 p-4">
-          <section class="w-full lg:w-[25%]">
-            <a href="https://weebcentral.com/series/01J76XYCPSY3C4BNPBRY8JMCBE/Solo-Leveling">
-              <article class="hidden lg:block w-full aspect-4/6 overflow-hidden">
-                <picture>
-                  <source srcset="https://temp.compsci88.com/cover/normal/01J76XYCPSY3C4BNPBRY8JMCBE.webp" width="200" height="300" type="image/webp">
-                  <img src="https://temp.compsci88.com/cover/fallback/01J76XYCPSY3C4BNPBRY8JMCBE.jpg" alt="Solo Leveling cover">
-                </picture>
-              </article>
-              <div class="text-ellipsis truncate text-white text-center text-lg z-20 w-[90%]">Solo Leveling</div>
-            </a>
-          </section>
-        </article>
-        <article class="bg-base-300 flex gap-4 p-4">
-          <section>
-            <a href="/series/01J76XYXYZ/Solo-Leveling-Ragnarok">
-              <img src="https://temp.compsci88.com/cover/fallback/01J76XYXYZ.jpg" alt="Solo Leveling: Ragnarok cover">
-              <div class="text-ellipsis truncate">Solo Leveling: Ragnarok</div>
-            </a>
-          </section>
-        </article>
-        <button class="btn" hx-get="/search/data?limit=32&amp;offset=32&amp;text=solo">Load more</button>
-    """.trimIndent()
-
     @Test
-    fun `weeb search reads title path cover and next page`() {
-        val hits = WeebCentralParser.parseSearch(weebSearch)
-        assertEquals(2, hits.size)
-        assertEquals("Solo Leveling", hits[0].title)
-        assertEquals("/series/01J76XYCPSY3C4BNPBRY8JMCBE/Solo-Leveling", hits[0].path)
-        assertEquals(
-            "https://temp.compsci88.com/cover/normal/01J76XYCPSY3C4BNPBRY8JMCBE.webp",
-            hits[0].cover,
-        )
-        assertEquals("/series/01J76XYXYZ/Solo-Leveling-Ragnarok", hits[1].path)
-        assertEquals("Solo Leveling: Ragnarok", hits[1].title)
-        assertTrue(WeebCentralParser.hasNextPage(weebSearch))
-    }
-
-    @Test
-    fun `weeb chapters keep the site order and read name and date`() {
+    fun `kakalot search reads the story items and the next page`() {
         val html = """
-            <div class="flex items-center" x-data="{ new_chapter: checkNewChapter('2024-09-07T17:04:15.717343Z') }">
-              <a href="/chapters/01J76XZ666GREP4DQDKEP1YDZG" class="hover:bg-base-300 flex-1 flex items-center p-2">
-                <span class="grow flex items-center gap-2"><span class="">Chapter 200</span></span>
-                <time datetime="2024-09-07T17:04:15.717Z">Sep 7</time>
-              </a>
+            <div class="panel_story_list">
+              <div class="story_item">
+                <a href="https://www.mangakakalot.gg/manga/dimensional-mercenaryy">
+                  <img src="https://img-r1.2xstorage.com/thumb/dimensional-mercenaryy.webp" alt="Dimensional Mercenary" class="lazy">
+                </a>
+                <div class="story_item_right">
+                  <h3 class="story_name"><a href="https://www.mangakakalot.gg/manga/dimensional-mercenaryy">Dimensional Mercenary</a></h3>
+                  <em class="story_chapter"><a rel="nofollow" href="https://www.mangagoku.com/manga/dimensional-mercenaryy/chapter-303"> Chapter 303 </a></em>
+                </div>
+              </div>
+              <div class="story_item">
+                <a href="https://www.mangakakalot.gg/manga/mercenary-alias"></a>
+                <div class="story_item_right">
+                  <h3 class="story_name"><a href="https://www.mangakakalot.gg/manga/mercenary-alias">Mercenary Alias</a></h3>
+                </div>
+              </div>
             </div>
-            <div><a href="/chapters/01J76XZ6614Z72ZP8CDK0PV0V3">
-              <span class="grow"><span>Chapter 199</span></span>
-            </a></div>
+            <div class="panel_page_number"><div class="group_page">
+              <a class="page_blue page_disabled">Previous</a>
+              <div class="page_select">1</div>
+              <a href="https://www.mangakakalot.gg/search/story/mercenary?page=2" class="page_blue">Next</a>
+            </div></div>
         """.trimIndent()
-        val chapters = WeebCentralParser.parseChapters(html)
-        assertEquals(listOf("Chapter 200", "Chapter 199"), chapters.map { it.title })
-        assertEquals("/chapters/01J76XZ666GREP4DQDKEP1YDZG", chapters[0].path)
-        assertEquals("2024-09-07T17:04:15.717Z", chapters[0].date)
+        val origin = "https://www.mangakakalot.gg"
+        val hits = MangakakalotParser.parseSearch(html, origin)
+        assertEquals(2, hits.size)
+        assertEquals("Dimensional Mercenary", hits[0].title)
+        assertEquals("/manga/dimensional-mercenaryy", hits[0].path)
+        assertEquals("https://img-r1.2xstorage.com/thumb/dimensional-mercenaryy.webp", hits[0].cover)
+        assertEquals("Mercenary Alias", hits[1].title)
+        assertTrue(MangakakalotParser.hasNextPage(html, 1))
     }
 
     @Test
-    fun `weeb pages read the strip images in order`() {
+    fun `kakalot details read the info list and the summary box`() {
         val html = """
-            <section id="chapter-images">
-              <img src="https://hot.planeptune.us/manga/Solo-Leveling/0200-001.png">
-              <img src="https://hot.planeptune.us/manga/Solo-Leveling/0200-002.png">
-            </section>
+            <div class="manga-info-top">
+              <div class="manga-info-pic">
+                <img src="https://img-r1.2xstorage.com/thumb/the-young-lady.webp" alt="Cover">
+              </div>
+              <div class="manga-info-content">
+                <ul class="manga-info-text">
+                  <li><h1>The Young Lady Hates Living a Diligent Life!</h1></li>
+                  <li>Author(s) : Se-U Kwon, Yu-Ra </li>
+                  <li>Status : Ongoing</li>
+                  <li class="genres">Genres : <a href="/genre/comedy"> Comedy </a>, <a href="/genre/fantasy"> Fantasy </a></li>
+                </ul>
+              </div>
+            </div>
+            <div id="contentBox">
+              <h2><p>The Young Lady summary: </p></h2>
+              To think that the end of the perfect life would be death from overwork!
+            </div>
+        """.trimIndent()
+        val details = MangakakalotParser.parseDetails(html, "https://www.mangakakalot.gg")
+        assertEquals("The Young Lady Hates Living a Diligent Life!", details.title)
+        assertEquals("Se-U Kwon, Yu-Ra", details.author)
+        assertEquals("Ongoing", details.status)
+        assertEquals(listOf("Comedy", "Fantasy"), details.genres)
+        assertTrue(details.description.startsWith("To think"))
+        assertEquals("https://img-r1.2xstorage.com/thumb/the-young-lady.webp", details.cover)
+    }
+
+    @Test
+    fun `kakalot chapters come from the api newest first and read oldest first`() {
+        val json = """
+            {"success":true,"data":{"chapters":[
+              {"chapter_name":"Chapter 8","chapter_slug":"chapter-8","chapter_num":8,"updated_at":"2026-11-26T04:12:55Z","view":533},
+              {"chapter_name":"Chapter 7","chapter_slug":"chapter-7","chapter_num":7,"updated_at":"2026-11-25T04:12:30Z","view":114}
+            ]}}
+        """.trimIndent()
+        val chapters = MangakakalotParser.parseChaptersApi(json, "the-young-lady")
+        assertEquals(listOf("Chapter 7", "Chapter 8"), chapters.map { it.title })
+        assertEquals("https://www.mangagoku.com/manga/the-young-lady/chapter-7", chapters[0].path)
+        assertEquals("2026-11-25T04:12:30Z", chapters[0].date)
+    }
+
+    @Test
+    fun `kakalot pages read the reader images and nothing else`() {
+        val html = """
+            <html><body>
+              <img src="https://img-r1.2xstorage.com/the-young-lady/1/0.webp" alt="The Young Lady Chapter 1 page 1 - MangaGoku" class="block">
+              <img src="https://img-r1.2xstorage.com/the-young-lady/1/1.webp" alt="The Young Lady Chapter 1 page 2 - MangaGoku" class="block">
+              <img src="https://img-r1.2xstorage.com/thumb/someone-else.webp" alt="Someone Else">
+            </body></html>
         """.trimIndent()
         assertEquals(
             listOf(
-                "https://hot.planeptune.us/manga/Solo-Leveling/0200-001.png",
-                "https://hot.planeptune.us/manga/Solo-Leveling/0200-002.png",
+                "https://img-r1.2xstorage.com/the-young-lady/1/0.webp",
+                "https://img-r1.2xstorage.com/the-young-lady/1/1.webp",
             ),
-            WeebCentralParser.parsePages(html),
+            MangakakalotParser.parsePages(html),
         )
-    }
-
-    @Test
-    fun `weeb details read the info list`() {
-        val html = """
-            <h1>Solo Leveling</h1>
-            <meta property="og:image" content="https://temp.compsci88.com/cover/fallback/01J76.jpg">
-            <ul>
-              <li><strong>Author(s): </strong><span><a href="#">GEE So-Lyung</a></span></li>
-              <li><strong>Tags(s): </strong><span><a href="#">Action</a>,</span><span><a href="#">Fantasy</a></span></li>
-              <li><strong>Type: </strong><a href="#">Manhwa</a></li>
-              <li><strong>Status: </strong><a href="#">Complete</a></li>
-              <li><strong>Description</strong><p>E-class hunter Jinwoo Sung is the weakest of them all.</p></li>
-            </ul>
-        """.trimIndent()
-        val details = WeebCentralParser.parseDetails(html)
-        assertEquals("Solo Leveling", details.title)
-        assertEquals("GEE So-Lyung", details.author)
-        assertEquals("Complete", details.status)
-        assertEquals(listOf("Action", "Fantasy"), details.genres)
-        assertTrue(details.description.startsWith("E-class hunter"))
-        assertEquals("https://temp.compsci88.com/cover/fallback/01J76.jpg", details.cover)
     }
 
     @Test

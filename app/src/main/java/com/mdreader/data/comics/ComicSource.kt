@@ -6,7 +6,7 @@ package com.mdreader.data.comics
  * the reader only needs search, details, chapters and page images.
  */
 interface ComicSource {
-    /** Stable id saved on the shelf entry: "weebcentral", "batcave". */
+    /** Stable id saved on the shelf entry: "mangakakalot", "batcave". */
     val id: String
     val name: String
     /** Where the source lives, for Referer headers and host checks. */
@@ -62,7 +62,7 @@ class ComicException(message: String, cause: Throwable? = null) : Exception(mess
 
 /** The hardcoded sources, in the order the Add dock offers them. */
 object ComicSources {
-    val all: List<ComicSource> = listOf(WeebCentralSource, BatCaveSource)
+    val all: List<ComicSource> = listOf(MangakakalotSource, BatCaveSource)
 
     fun byId(id: String?): ComicSource? = all.firstOrNull { it.id == id }
 
@@ -75,7 +75,7 @@ object ComicSources {
 
 /** A source may recognise its own paths even without a saved id (older shelf entries). */
 internal fun ComicSource.looksLikeItsPath(path: String): Boolean = when (id) {
-    "weebcentral" -> path.startsWith("/series/") || path.startsWith("/chapters/")
+    "mangakakalot" -> path.startsWith("/manga/") || path.startsWith("/chapter/")
     "batcave" -> path.startsWith("/comix/") || path.startsWith("/reader/")
     else -> false
 }
@@ -87,7 +87,7 @@ internal fun ComicSource.looksLikeItsPath(path: String): Boolean = when (id) {
  */
 suspend fun comicCoverBytes(url: String): ByteArray? = when {
     url.startsWith("data:") -> ComicOkHttp.dataUriBytes(url)
-    WeebCentralSource.isImageUrl(url) -> WeebCentralSource.imageBytes(url)
+    MangakakalotSource.isImageUrl(url) -> MangakakalotSource.imageBytes(url)
     url.startsWith(BatCaveSource.origin) -> BatCaveSource.imageBytes(url)
     else -> null
 }
