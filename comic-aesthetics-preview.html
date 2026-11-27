@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comic aesthetics — three directions</title>
+<style>
+  :root{
+    /* novel reference (unchanged) */
+    --paper:#F6F4EF; --ink:#151515; --verm:#C53A2B; --sub:#5F5B54; --hairN:#D6D1C7;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0c0c0e;color:#ddd;font:14px/1.4 Helvetica,Arial,sans-serif;padding:28px}
+  h1{font-size:18px;font-weight:600;color:#fff;letter-spacing:.5px}
+  .lede{color:#999;margin:6px 0 24px;max-width:860px}
+  .row{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start}
+  .col{display:flex;flex-direction:column;gap:10px}
+  .col h2{font-size:13px;letter-spacing:2px;text-transform:uppercase;color:#fff}
+  .col .note{color:#888;font-size:12px;max-width:390px}
+  /* phone frame */
+  .phone{width:390px;height:844px;border:1px solid #333;border-radius:26px;overflow:hidden;position:relative;background:#000;box-shadow:0 18px 50px rgba(0,0,0,.5)}
+  .screens{display:flex;gap:10px}
+  .half{position:relative;width:390px;height:844px;overflow:hidden;border-radius:26px;flex:none}
+  .half + .half{display:flex;flex-direction:column}
+  /* the strip below each phone labels it */
+  .scrollhint{height:0}
+  /* ---------- shared demo art ---------- */
+  .art{background:
+      radial-gradient(120% 90% at 80% 10%, rgba(255,255,255,.25), transparent 55%),
+      linear-gradient(160deg,#3a2f6e 0%,#7a2f4a 45%,#1c1430 100%)}
+  .art::after{content:"";position:absolute;inset:0;
+      background:
+      radial-gradient(90% 60% at 20% 85%, rgba(0,0,0,.55), transparent 60%),
+      linear-gradient(0deg, rgba(0,0,0,.75), transparent 55%)}
+  .arttitle{position:absolute;left:16px;bottom:12px;color:#fff;font-weight:800;font-size:22px;letter-spacing:.5px;text-shadow:0 2px 12px rgba(0,0,0,.8);z-index:2}
+  .page1{height:300px;position:relative;overflow:hidden}
+  .page2{height:220px;position:relative;overflow:hidden}
+  .page1::before,.page2::before{content:"";position:absolute;inset:0;
+    background:
+    linear-gradient(115deg, transparent 46%, rgba(255,255,255,.14) 47%, rgba(255,255,255,.14) 49%, transparent 50%),
+    radial-gradient(80% 60% at 30% 20%, rgba(255,120,90,.5), transparent 60%)}
+  .cap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.5);letter-spacing:3px;font-size:11px;z-index:3}
+
+  /* ============================================================
+     NOVEL REFERENCE (today) — paper + hairlines (do not change)
+     ============================================================ */
+  .novel .body{height:100%;background:var(--paper);overflow:hidden;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif}
+  .novel .top{padding:18px 28px 0}
+  .novel .t{font-size:23px;font-weight:500;color:var(--ink)}
+  .novel .a{font-size:11px;letter-spacing:1.2px;color:var(--verm);margin-top:5px}
+  .novel .genre{display:flex;gap:6px;margin-top:16px}
+  .novel .genre span{border:1px solid #B8B2A7;font-size:10.5px;color:var(--sub);padding:5px 8px}
+  .novel .stats{display:flex;border-top:1px solid var(--hairN);border-bottom:1px solid var(--hairN);margin-top:18px}
+  .novel .stats div{flex:1;padding:13px 0}
+  .novel .stats div+div{border-left:1px solid var(--hairN);padding-left:12px}
+  .novel .stats small{display:block;font-size:11px;letter-spacing:1.2px;color:var(--sub)}
+  .novel .stats b{display:block;font-size:17px;font-weight:500;color:var(--ink);margin-top:6px}
+  .novel .stats .acc b{color:var(--verm)}
+  .novel .cta{margin:16px 28px 0;background:var(--ink);color:var(--paper);text-align:center;font-size:12px;letter-spacing:1.2px;padding:15px}
+  .novel .lib{margin:10px 28px 0;border:1px solid var(--ink);color:var(--ink);text-align:center;font-size:12px;letter-spacing:1.2px;padding:14px}
+  .novel .sum{margin:20px 28px 0}
+  .novel .sum small{font-size:11px;letter-spacing:1.2px;color:var(--verm)}
+  .novel .sum p{font-family:Georgia,serif;font-size:13px;color:var(--sub);margin-top:8px}
+  .novel .chh{display:flex;justify-content:space-between;margin:22px 28px 8px;font-size:11px;letter-spacing:1.2px;color:var(--sub)}
+  .novel .ch{border-top:1px solid var(--hairN)}
+  .novel .chr{display:flex;gap:12px;padding:13px 28px;border-bottom:1px solid var(--hairN)}
+  .novel .chr i{font-style:normal;font-size:11px;color:var(--sub);width:32px;padding-top:3px}
+  .novel .chr b{font-weight:400;font-size:15px;color:var(--ink)}
+  .novel .cur i{color:var(--verm)}
+  .novel .fade{position:absolute;inset:0;background:linear-gradient(transparent, var(--paper) 92%)}
+
+  /* ============================================================
+     DIRECTION A — KURO : always-black, artwork forward, square
+     ============================================================ */
+  .kuro{background:#0D0D0F;color:#F2EFE8;font-family:Helvetica,Arial,sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .kuro .hero{position:relative;height:300px}
+  .kuro .hero .art{position:absolute;inset:0}
+  .kuro .hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(13,13,15,.35),transparent 30%,transparent 62%,#0D0D0F 97%)}
+  .kuro .bk{position:absolute;top:14px;left:10px;color:#fff;font-size:20px;z-index:3;text-shadow:0 1px 8px rgba(0,0,0,.7)}
+  .kuro .hero .meta{position:absolute;left:20px;bottom:26px;z-index:3}
+  .kuro .hero .stamp{display:inline-block;font-size:10px;letter-spacing:2.5px;color:#0D0D0F;background:#E05A44;padding:4px 8px;font-weight:700}
+  .kuro .hero .t{font-size:27px;font-weight:800;letter-spacing:-.5px;color:#fff;margin-top:10px;max-width:300px;line-height:1.1}
+  .kuro .hero .a{font-size:11px;letter-spacing:2px;color:rgba(255,255,255,.75);margin-top:7px}
+  .kuro .ticker{display:flex;justify-content:space-between;padding:0 20px;margin:0;border-top:1px solid rgba(255,255,255,.12);border-bottom:1px solid rgba(255,255,255,.12)}
+  .kuro .ticker div{flex:1;padding:11px 0;font-size:10.5px;letter-spacing:1.8px;color:#8E8B85;text-align:center}
+  .kuro .ticker div+div{border-left:1px solid rgba(255,255,255,.12)}
+  .kuro .ticker b{color:#F2EFE8;font-weight:600;margin-left:6px}
+  .kuro .ticker .on b{color:#E05A44}
+  .kuro .cta{margin:18px 20px 0;background:#F2EFE8;color:#0D0D0F;text-align:center;font-size:12px;font-weight:700;letter-spacing:1.6px;padding:16px}
+  .kuro .lib{margin:10px 20px 0;display:flex;gap:10px}
+  .kuro .lib div{flex:1;text-align:center;font-size:11px;letter-spacing:1.6px;color:#F2EFE8;border:1px solid rgba(255,255,255,.35);padding:14px 0}
+  .kuro .sum{margin:22px 20px 0}
+  .kuro .sum small{font-size:10px;letter-spacing:2.2px;color:#E05A44}
+  .kuro .sum p{font-size:13px;color:#A8A49C;margin-top:9px;max-width:330px}
+  .kuro .chh{display:flex;justify-content:space-between;margin:24px 20px 10px;font-size:10px;letter-spacing:2.2px;color:#8E8B85}
+  .kuro .chr{display:flex;gap:14px;padding:14px 20px;border-top:1px solid rgba(255,255,255,.10)}
+  .kuro .chr i{font-style:normal;font-weight:800;font-size:12px;color:#E05A44;width:44px}
+  .kuro .chr b{font-weight:400;font-size:14.5px;color:#F2EFE8;max-width:290px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kuro .chr.read b{color:#8E8B85}
+  .kuro .fade{position:absolute;inset:0;background:linear-gradient(transparent,#0D0D0F 93%)}
+
+  .kuroR{background:#000;height:100%;overflow:hidden;position:relative;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif}
+  .kuroR .bar{position:absolute;top:0;left:0;right:0;z-index:4;display:flex;align-items:center;padding:12px 14px;background:linear-gradient(#000,rgba(0,0,0,.75),transparent);color:#fff}
+  .kuroR .bar .bk{font-size:20px;margin-right:12px}
+  .kuroR .bar .t{flex:1;font-size:11px;letter-spacing:2px;color:rgba(255,255,255,.85)}
+  .kuroR .bar .ix{font-size:11px;letter-spacing:2px;border:1px solid rgba(255,255,255,.6);padding:7px 12px}
+  .kuroR .pages{margin-top:52px}
+  .kuroR .pnum{position:absolute;top:10px;right:14px;z-index:3;font-size:10px;letter-spacing:2px;color:rgba(255,255,255,.85);text-shadow:0 1px 6px #000}
+  .kuroR .endp{padding:26px 20px;color:#8E8B85;font-size:10px;letter-spacing:2.2px;text-align:center}
+  .kuroR .foot{position:absolute;bottom:0;left:0;right:0;z-index:4;display:flex;align-items:center;justify-content:space-between;padding:10px 18px calc(10px);background:linear-gradient(transparent,rgba(0,0,0,.85) 60%);color:#fff;font-size:11px;letter-spacing:1.5px}
+  .kuroR .foot .nx{color:#E05A44;font-weight:700}
+  .kuroR .fade{position:absolute;inset:0;background:linear-gradient(transparent,#000 90%)}
+
+  /* ============================================================
+     DIRECTION B — PULP : newsstand print, heavy rules, issue badges
+     ============================================================ */
+  .pulp{background:#FAF3E3;color:#1A1712;font-family:Helvetica,Arial,sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .pulp .mast{border-bottom:3px solid #1A1712;
+    background-image:radial-gradient(#1A1712 0.9px, transparent 1px);background-size:5px 5px;background-position:0 -6px;
+    padding:14px 16px 12px;display:flex;align-items:center;justify-content:space-between}
+  .pulp .mast .bk{font-size:19px;font-weight:900}
+  .pulp .mast .st{font-size:10px;font-weight:800;letter-spacing:2.5px;border:2px solid #D6402F;color:#D6402F;padding:4px 7px;transform:rotate(-2deg);background:#FAF3E3}
+  .pulp .poster{margin:0;border-bottom:3px solid #1A1712;position:relative;height:280px}
+  .pulp .poster .art{position:absolute;inset:0}
+  .pulp .poster::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,rgba(26,23,18,.85),transparent 50%)}
+  .pulp .poster .t{position:absolute;left:16px;bottom:14px;z-index:3;color:#FAF3E3;font-weight:900;font-size:26px;line-height:1.05;letter-spacing:-.4px;text-transform:uppercase;max-width:330px;text-shadow:0 2px 0 #1A1712}
+  .pulp .poster .a{position:absolute;left:16px;bottom:-8px;z-index:3;display:inline-block;background:#D6402F;color:#FAF3E3;font-size:10px;font-weight:800;letter-spacing:2px;padding:5px 9px;transform:translateY(-50%)}
+  .pulp .facts{display:flex;border-bottom:3px solid #1A1712}
+  .pulp .facts div{flex:1;text-align:center;padding:12px 4px;font-size:10px;font-weight:800;letter-spacing:1.6px;color:#4c463c}
+  .pulp .facts div+div{border-left:3px solid #1A1712}
+  .pulp .facts b{display:block;color:#1A1712;font-size:16px;letter-spacing:0;margin-top:5px}
+  .pulp .facts .acc b{color:#D6402F}
+  .pulp .cta{margin:16px 16px 0;background:#D6402F;color:#FAF3E3;text-align:center;font-weight:900;font-size:13px;letter-spacing:2px;padding:17px;border:3px solid #1A1712;box-shadow:5px 5px 0 #1A1712}
+  .pulp .lib{margin:12px 16px 0;display:flex;gap:12px}
+  .pulp .lib div{flex:1;text-align:center;font-weight:800;font-size:11px;letter-spacing:1.6px;border:3px solid #1A1712;padding:13px 0;background:#FAF3E3;box-shadow:4px 4px 0 #1A1712}
+  .pulp .sum{margin:20px 16px 0;border:3px solid #1A1712;padding:12px;box-shadow:4px 4px 0 #1A1712;background:#FFFBF0}
+  .pulp .sum small{font-size:10px;font-weight:800;letter-spacing:2px;color:#D6402F}
+  .pulp .sum p{font-size:12.5px;color:#4c463c;margin-top:8px}
+  .pulp .chh{margin:20px 16px 10px;display:flex;justify-content:space-between;font-weight:800;font-size:11px;letter-spacing:1.6px}
+  .pulp .chr{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:3px solid #1A1712}
+  .pulp .chr .iss{background:#1A1712;color:#FAF3E3;font-size:11px;font-weight:900;padding:5px 7px;letter-spacing:.5px}
+  .pulp .chr.cur .iss{background:#D6402F}
+  .pulp .chr b{font-weight:700;font-size:14px;letter-spacing:.2px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+  .pulp .chr.read b{color:#8d8677}
+  .pulp .fade{position:absolute;inset:0;background:linear-gradient(transparent,#FAF3E3 93%)}
+
+  .pulpR{background:#EFE7D2;height:100%;overflow:hidden;position:relative;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif}
+  .pulpR .bar{border-bottom:3px solid #1A1712;background:#FAF3E3;display:flex;align-items:center;padding:12px 14px}
+  .pulpR .bar .bk{font-size:19px;font-weight:900;margin-right:12px}
+  .pulpR .bar .t{flex:1;font-size:11px;font-weight:800;letter-spacing:2px;color:#1A1712;text-transform:uppercase}
+  .pulpR .bar .ix{font-size:11px;font-weight:800;letter-spacing:2px;background:#1A1712;color:#FAF3E3;padding:7px 11px}
+  .pulpR .op{padding:18px 16px 14px}
+  .pulpR .op .n{font-size:10px;font-weight:800;letter-spacing:2.5px;color:#D6402F}
+  .pulpR .op .t{font-size:22px;font-weight:900;text-transform:uppercase;letter-spacing:-.3px;margin-top:8px}
+  .pulpR .op .m{font-size:10px;font-weight:800;letter-spacing:2px;color:#8d8677;margin-top:6px}
+  .pulpR .sheet{margin:0 16px;border:3px solid #1A1712;background:#fff}
+  .pulpR .page1{border-bottom:3px solid #1A1712}
+  .pulpR .endp{padding:22px 16px;display:flex;justify-content:space-between;font-weight:900;font-size:12px;letter-spacing:2px}
+  .pulpR .endp .nx{color:#D6402F}
+  .pulpR .foot{margin-top:auto;background:#1A1712;color:#FAF3E3;display:flex;justify-content:space-between;align-items:center;padding:14px 18px;font-weight:800;font-size:11px;letter-spacing:1.8px}
+  .pulpR .foot .nx{color:#D6402F}
+  .pulpR .fade{position:absolute;inset:0;background:linear-gradient(transparent,#EFE7D2 92%)}
+
+  /* ============================================================
+     DIRECTION C — SCREEN : cool webtoon app, soft cards, rounded
+     ============================================================ */
+  .screen{background:#14161B;color:#E8EAF0;font-family:Helvetica,Arial,sans-serif;height:100%;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .screen .bar{display:flex;align-items:center;padding:14px 16px}
+  .screen .bar .bk{font-size:19px;color:#E8EAF0;margin-right:12px}
+  .screen .bar .ix{margin-left:auto;font-size:11px;letter-spacing:1.5px;color:#14161B;background:#7B8CFF;font-weight:700;border-radius:999px;padding:8px 14px}
+  .screen .poster{margin:0 16px;border-radius:20px;overflow:hidden;position:relative;height:270px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+  .screen .poster .art{position:absolute;inset:0}
+  .screen .poster::after{content:"";position:absolute;inset:0;border-radius:20px;background:linear-gradient(180deg,transparent 40%,rgba(10,11,14,.9));box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
+  .screen .poster .t{position:absolute;left:16px;bottom:34px;z-index:3;color:#fff;font-size:21px;font-weight:700;max-width:300px;line-height:1.15}
+  .screen .poster .a{position:absolute;left:16px;bottom:12px;z-index:3;font-size:11px;color:#9AA0AC;letter-spacing:1.5px}
+  .screen .pills{display:flex;gap:8px;margin:14px 16px 0}
+  .screen .pills span{font-size:10.5px;color:#C6CBD6;background:#1E2128;border:1px solid #2A2E38;border-radius:999px;padding:6px 10px}
+  .screen .cards{display:flex;gap:10px;margin:12px 16px 0}
+  .screen .cards div{flex:1;background:#1E2128;border-radius:16px;padding:12px 0;text-align:center}
+  .screen .cards small{display:block;font-size:9.5px;letter-spacing:1.5px;color:#9AA0AC}
+  .screen .cards b{display:block;font-size:16px;font-weight:700;margin-top:5px;color:#E8EAF0}
+  .screen .cards .acc b{color:#7B8CFF}
+  .screen .cta{margin:14px 16px 0;background:#7B8CFF;color:#101218;text-align:center;font-size:12px;font-weight:700;letter-spacing:1.5px;border-radius:16px;padding:16px;box-shadow:0 8px 24px rgba(123,140,255,.35)}
+  .screen .lib{margin:10px 16px 0;text-align:center;font-size:11px;letter-spacing:1.5px;color:#C6CBD6;border:1px solid #2A2E38;border-radius:16px;padding:14px;background:#1A1D23}
+  .screen .sum{margin:18px 16px 0;background:#1A1D23;border:1px solid #2A2E38;border-radius:16px;padding:14px}
+  .screen .sum small{font-size:10px;letter-spacing:2px;color:#7B8CFF}
+  .screen .sum p{font-size:12.5px;color:#9AA0AC;margin-top:8px}
+  .screen .chh{display:flex;justify-content:space-between;margin:18px 20px 8px;font-size:10.5px;letter-spacing:1.8px;color:#9AA0AC}
+  .screen .chr{display:flex;align-items:center;gap:12px;margin:0 16px;padding:13px 14px;border-radius:14px}
+  .screen .chr.cur{background:#1E2128;border:1px solid #2A2E38}
+  .screen .chr .n{font-size:11px;color:#9AA0AC;width:26px}
+  .screen .chr.cur .n{color:#7B8CFF;font-weight:700}
+  .screen .chr b{font-weight:500;font-size:14px;color:#E8EAF0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+  .screen .chr.read b{color:#6A7080}
+  .screen .fade{position:absolute;inset:0;background:linear-gradient(transparent,#14161B 93%)}
+
+  .screenR{background:#0F1114;height:100%;overflow:hidden;position:relative;display:flex;flex-direction:column;font-family:Helvetica,Arial,sans-serif}
+  .screenR .bar{display:flex;align-items:center;padding:14px 16px;background:#14161B}
+  .screenR .bar .bk{font-size:19px;color:#E8EAF0;margin-right:12px}
+  .screenR .bar .t{flex:1;font-size:11px;letter-spacing:1.8px;color:#9AA0AC}
+  .screenR .bar .ix{font-size:11px;letter-spacing:1.5px;color:#C6CBD6;border:1px solid #2A2E38;border-radius:999px;padding:7px 13px}
+  .screenR .op{padding:16px 20px 12px}
+  .screenR .op .n{font-size:10px;letter-spacing:2.2px;color:#7B8CFF}
+  .screenR .op .t{font-size:19px;font-weight:700;color:#E8EAF0;margin-top:8px}
+  .screenR .op .m{font-size:10.5px;letter-spacing:1.5px;color:#6A7080;margin-top:6px}
+  .screenR .pages{padding:0 12px;display:flex;flex-direction:column;gap:14px}
+  .screenR .pg{border-radius:18px;overflow:hidden;position:relative;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .screenR .foot{margin-top:auto;padding:12px 18px calc(14px);background:#14161B;display:flex;align-items:center;justify-content:space-between}
+  .screenR .foot .pv,.screenR .foot .nx{font-size:11.5px;font-weight:700;letter-spacing:1px;color:#E8EAF0;background:#1E2128;border-radius:999px;padding:10px 16px}
+  .screenR .foot .nx{color:#101218;background:#7B8CFF}
+  .screenR .foot .c{font-size:10.5px;letter-spacing:1.5px;color:#9AA0AC}
+  .screenR .fade{position:absolute;inset:0;background:linear-gradient(transparent,#0F1114 92%)}
+
+  .tag{display:inline-block;margin-right:6px;font-size:10px;letter-spacing:1.5px;color:#0c0c0e;background:#ddd;padding:3px 7px;border-radius:3px}
+</style>
+</head>
+<body>
+  <h1>Comic aesthetics — three directions</h1>
+  <p class="lede">Leftmost is today's novel page (paper + hairlines — unchanged). Then three candidate looks for comics only. Each column: the comic poster page, and the comic reader. Tap targets, content and behavior stay as they are; only the skin changes.</p>
+
+  <div class="row">
+
+    <!-- ============ REFERENCE ============ -->
+    <div class="col">
+      <h2>Novel · today (reference)</h2>
+      <div class="phone novel"><div class="body">
+        <div class="top">
+          <div class="t">Solo Leveling</div>
+          <div class="a">CHUGONG</div>
+        </div>
+        <div class="genre"><span>ACTION</span><span>FANTASY</span><span>SHOUNEN</span></div>
+        <div class="stats">
+          <div><small>CHAPTERS</small><b>180</b></div>
+          <div><small>STATUS</small><b>Ongoing</b></div>
+          <div class="acc"><small>READ</small><b>42%</b></div>
+        </div>
+        <div class="cta">CONTINUE · CH. 076</div>
+        <div class="lib">✓ IN LIBRARY</div>
+        <div class="sum"><small>SUMMARY</small><p>The weakest hunter of all mankind, Sung Jinwoo, levels up in shadows…</p></div>
+        <div class="chh"><span>CHAPTERS · 180</span><span>NEWEST FIRST</span></div>
+        <div class="ch">
+          <div class="chr cur"><i>076</i><b>Chapter 76</b></div>
+          <div class="chr"><i>075</i><b>Chapter 75</b></div>
+          <div class="chr"><i>074</i><b>Chapter 74</b></div>
+          <div class="chr"><i>073</i><b>Chapter 73</b></div>
+          <div class="chr"><i>072</i><b>Chapter 72</b></div>
+          <div class="chr"><i>071</i><b>Chapter 71</b></div>
+        </div>
+        <div class="fade"></div>
+      </div></div>
+      <p class="note">Warm paper, sumi ink, hairlines, vermilion accent. Comics currently reuse exactly this.</p>
+    </div>
+
+    <!-- ============ A · KURO ============ -->
+    <div class="col">
+      <h2>A · Kuro</h2>
+      <div class="phone kuro">
+        <div class="hero">
+          <div class="art"></div>
+          <div class="bk">←</div>
+          <div class="meta">
+            <span class="stamp">WEBCENTRAL</span>
+            <div class="t">Solo Leveling</div>
+            <div class="a">CHUGONG</div>
+          </div>
+        </div>
+        <div class="ticker">
+          <div>CHAPTERS<b>180</b></div>
+          <div>STATUS<b>ONGOING</b></div>
+          <div class="on">READ<b>42%</b></div>
+        </div>
+        <div class="cta">CONTINUE · #076</div>
+        <div class="lib"><div>✓ IN LIBRARY</div><div>OPEN</div></div>
+        <div class="sum"><small>SYNOPSIS</small><p>The weakest hunter of all mankind levels up in shadows — artwork first, black room around it.</p></div>
+        <div class="chh"><span>CHAPTERS · 180</span><span>NEWEST FIRST</span></div>
+        <div class="chr cur"><i>#076</i><b>Chapter 76</b></div>
+        <div class="chr read"><i>#075</i><b>Chapter 75</b></div>
+        <div class="chr read"><i>#074</i><b>Chapter 74</b></div>
+        <div class="chr read"><i>#073</i><b>Chapter 73</b></div>
+        <div class="fade"></div>
+      </div>
+      <p class="note"><span class="tag">always dark</span><span class="tag">art-forward</span>Projector room: near-black stage, big hero poster, issue numbers <b>#076</b> in vermilion, solid paper-white CTA. Reader: pages edge-to-edge on pure black, floating translucent bars.</p>
+    </div>
+    <div class="col">
+      <h2>A · Kuro — reader</h2>
+      <div class="phone kuroR">
+        <div class="bar"><span class="bk">←</span><span class="t">SOLO LEVELING</span><span class="ix">INDEX</span></div>
+        <div class="pages">
+          <div class="page1 art"><span class="pnum">01</span><span class="cap">PAGE ARTWORK</span></div>
+          <div class="page2 art"><span class="pnum">02</span><span class="cap">PAGE ARTWORK</span></div>
+        </div>
+        <div class="endp">END OF CHAPTER</div>
+        <div class="foot"><span>PREV</span><span>076 / 180 · PAGE 2/14</span><span class="nx">NEXT →</span></div>
+        <div class="fade"></div>
+      </div>
+    </div>
+
+    <!-- ============ B · PULP ============ -->
+    <div class="col">
+      <h2>B · Pulp</h2>
+      <div class="phone pulp">
+        <div class="mast"><span class="bk">←</span><span class="st">★ COMIC</span></div>
+        <div class="poster">
+          <div class="art"></div>
+          <div class="t">Solo<br>Leveling</div>
+          <div class="a">BY CHUGONG</div>
+        </div>
+        <div class="facts">
+          <div>CHAPTERS<b>180</b></div>
+          <div>STATUS<b>ONGOING</b></div>
+          <div class="acc">READ<b>42%</b></div>
+        </div>
+        <div class="cta">▶ CONTINUE #076</div>
+        <div class="lib"><div>✓ IN LIBRARY</div><div>OPEN</div></div>
+        <div class="sum"><small>SYNOPSIS</small><p>The weakest hunter of all mankind levels up in shadows — printed on pulp stock, sold at a newsstand.</p></div>
+        <div class="chh"><span>CHAPTERS · 180</span><span>NEWEST FIRST ↓</span></div>
+        <div class="chr cur"><span class="iss">#076</span><b>Chapter 76</b></div>
+        <div class="chr read"><span class="iss">#075</span><b>Chapter 75</b></div>
+        <div class="chr read"><span class="iss">#074</span><b>Chapter 74</b></div>
+        <div class="chr read"><span class="iss">#073</span><b>Chapter 73</b></div>
+        <div class="fade"></div>
+      </div>
+      <p class="note"><span class="tag">print</span><span class="tag">bold</span>Newsstand pulp: halftone masthead, 3px rules, hard drop shadows, uppercase display type, issue badges. Reader: pages on a printed sheet with an ink footer bar.</p>
+    </div>
+    <div class="col">
+      <h2>B · Pulp — reader</h2>
+      <div class="phone pulpR">
+        <div class="bar"><span class="bk">←</span><span class="t">Solo Leveling</span><span class="ix">INDEX</span></div>
+        <div class="op"><div class="n">CHAPTER #076</div><div class="t">Chapter 76</div><div class="m">14 PAGES · VERTICAL STRIP</div></div>
+        <div class="sheet">
+          <div class="page1 art"><span class="cap">PAGE ARTWORK</span></div>
+          <div class="page2 art"><span class="cap">PAGE ARTWORK</span></div>
+        </div>
+        <div class="endp"><span>← PREVIOUS</span><span class="nx">NEXT CHAPTER →</span></div>
+        <div class="foot"><span>← PREV</span><span>076 / 180</span><span class="nx">NEXT →</span></div>
+        <div class="fade"></div>
+      </div>
+    </div>
+
+    <!-- ============ C · SCREEN ============ -->
+    <div class="col">
+      <h2>C · Screen</h2>
+      <div class="phone screen">
+        <div class="bar"><span class="bk">←</span><span class="ix">INDEX</span></div>
+        <div class="poster">
+          <div class="art"></div>
+          <div class="t">Solo Leveling</div>
+          <div class="a">CHUGONG · WEBCENTRAL</div>
+        </div>
+        <div class="pills"><span>Action</span><span>Fantasy</span><span>Shounen</span></div>
+        <div class="cards">
+          <div><small>CHAPTERS</small><b>180</b></div>
+          <div><small>STATUS</small><b>Ongoing</b></div>
+          <div class="acc"><small>READ</small><b>42%</b></div>
+        </div>
+        <div class="cta">Continue · Ch. 76</div>
+        <div class="lib">✓ In library</div>
+        <div class="sum"><small>SYNOPSIS</small><p>The weakest hunter of all mankind levels up in shadows — a modern webtoon-app skin, cool and soft.</p></div>
+        <div class="chh"><span>CHAPTERS · 180</span><span>NEWEST FIRST</span></div>
+        <div class="chr cur"><span class="n">76</span><b>Chapter 76</b></div>
+        <div class="chr read"><span class="n">75</span><b>Chapter 75</b></div>
+        <div class="chr read"><span class="n">74</span><b>Chapter 74</b></div>
+        <div class="chr read"><span class="n">73</span><b>Chapter 73</b></div>
+        <div class="fade"></div>
+      </div>
+      <p class="note"><span class="tag">cool dark</span><span class="tag">rounded</span>A standard webtoon-app look: cool gray, rounded cards with shadows, indigo accent, pill buttons. Deliberately softer than the app's square editorial grid.</p>
+    </div>
+    <div class="col">
+      <h2>C · Screen — reader</h2>
+      <div class="phone screenR">
+        <div class="bar"><span class="bk">←</span><span class="t">SOLO LEVELING</span><span class="ix">INDEX</span></div>
+        <div class="op"><div class="n">CHAPTER 76</div><div class="t">Chapter 76</div><div class="m">14 PAGES</div></div>
+        <div class="pages">
+          <div class="pg"><div class="page1 art"><span class="cap">PAGE ARTWORK</span></div></div>
+          <div class="pg"><div class="page2 art"><span class="cap">PAGE ARTWORK</span></div></div>
+        </div>
+        <div class="foot"><span class="pv">← Prev</span><span class="c">76 / 180</span><span class="nx">Next →</span></div>
+        <div class="fade"></div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
