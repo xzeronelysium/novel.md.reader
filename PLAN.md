@@ -1,144 +1,54 @@
-# novel.md.reader — v1 plan
+# The Blueprint — MD Reader 2.0
 
-A minimal Android reader for novels stored as one folder of `.md` / `.txt` chapters.
+This is the living record of how MD Reader evolved from a simple local novel viewer into a high-performance hybrid reader for both text and art.
 
-> **Status:** v1 built, installed on the phone, and confirmed working.
-> See `README.md` for build and usage instructions.
+## 🏛 The Core Philosophy
+The app exists to solve one problem: **The gap between "the files I have" and "a reading experience that doesn't suck."**
+Everything in the app is built to be "invisible"—the UI should vanish, leaving only the prose or the art.
 
-## Decisions locked in
+---
 
-| Topic | Decision |
-| --- | --- |
-| Platform | Native Android, Kotlin + Jetpack Compose (Material 3) |
-| Chapter format | Mixed `.md` and `.txt`, detected per file |
-| Folder model | One imported folder = one novel/project |
-| Import mode | **Reference in place** via Storage Access Framework — no copying |
-| v1 scope | Prev/Next, chapter list, remembers position |
-| Distribution | Debug/release APK sideloaded with `adb` — no Play Store |
-| App name / id | `novel.md.reader` / `com.mdreader` |
+## 📘 Phase 1: The Novel Foundation
+The goal was a "reference-in-place" model. No importing, no copying, no database bloat.
 
-## How import works (the important part)
+### The "Reference" Model
+Instead of copying files into an app-private sandbox, we use Android's **Storage Access Framework (SAF)**. 
+- **Persistence:** `takePersistableUriPermission` ensures that once you pick a folder, the app can return to it after a reboot without asking again.
+- **Natural Sort:** We don't use alphabetical sorting (which puts Chapter 10 before Chapter 2). We use a natural comparator so the reading order is actually human.
+- **Sumi Ink Design:** A design language based on warm paper, hairline grids, and a single vermilion accent.
 
-Because we reference instead of copy, the app must keep permission to the folder:
+### Technical Stack
+- **Language:** Kotlin + Jetpack Compose.
+- **Parser:** A hand-rolled Markdown parser (~150 lines) that handles headings, bold, italic, and lists without adding a single external dependency.
+- **Store:** A simple `library.json` for progress and project metadata.
 
-1. `ACTION_OPEN_DOCUMENT_TREE` opens Android's folder picker.
-2. `takePersistableUriPermission(..., FLAG_GRANT_READ_URI_PERMISSION)` — survives reboots and app restarts.
-3. List children once at import (`DocumentsContract`), keep `{displayName, documentUri}` per chapter.
-4. Read chapter text on demand via `ContentResolver.openInputStream(uri)`.
-5. Sort with a **natural sort** so `chapter_2.md` precedes `chapter_10.md`. Plain alphabetical fails this.
-6. Provide a **Refresh** action that re-lists the folder, so chapters added later show up.
+---
 
-**Trade-off you accepted:** if the folder is moved, deleted, or lives on a removed SD card, the project can't open. v1 handles this with a clear "folder unavailable — re-import" state rather than a crash.
+## 🎨 Phase 2: The Comics Layer (v2.0)
+Expanding the app to support web-comics required a total shift in how the app handles networking and memory.
 
-## Storage of app data
+### The "Kuro" Aesthetic
+Comics don't belong on paper. They belong on a "black stage." The `ComicSkin` tokens force a high-contrast, always-black environment, regardless of the system theme, to make colors pop and borders vanish.
 
-No database for v1. One JSON file in `filesDir/library.json`:
+### High-Performance Reading
+To get "10x faster" reading, we implemented a tiered loading pipeline:
+1. **Pooled OkHttp:** An 8-lane HTTP/2 pipeline that handles images and metadata in parallel.
+2. **Single-Flight Memoization:** `ComicMemo` ensures that if five different components ask for the same chapter list, the app only makes one network request.
+3. **Aggressive Prefetching:** A warm window of 8 pages, with a background sweep that stays 24 pages ahead of the user.
 
-```json
-{
-  "projects": [
-    {
-      "id": "uuid",
-      "name": "My Novel",
-      "treeUri": "content://...",
-      "chapters": [{ "name": "ch01.md", "uri": "content://..." }],
-      "importedAt": 1730000000
-    }
-  ],
-  "progress": {
-    "<projectId>": { "chapterIndex": 12, "scrollIndex": 0, "scrollOffset": 0 }
-  }
-}
-```
+### The Cloudflare Problem
+Modern comic sites use aggressive anti-bot shields. We solve this the "Mihon way":
+- **Invisible WebView:** When a challenge is detected, the app spins up a hidden WebView with the device's real User-Agent.
+- **Cookie Harvesting:** Once the challenge is solved, the clearance cookies are harvested and attached to the OkHttp client.
+- **Header Matching:** By matching the browser's HTTP/2 header order, the app becomes indistinguishable from a real browser.
 
-Serialized with Android's built-in `org.json` — zero extra dependencies, no annotation processing.
+### Zoom & Storage
+- **Zoom as a Mode:** Zoom isn't a "pop-up"; it's a first-class reading mode with its own state and navigation.
+- **Public Export:** Using SAF, users can export comic pages as standard `.webp` files to any public directory (e.g., `/Downloads/Comics/`), breaking the "app silo" and making the art accessible to other tools.
 
-## Screens
+---
 
-**1. Library**
-- List of imported novels (name + chapter count + last-read).
-- `+ Import folder` → SAF picker.
-- Long-press → delete project (removes app record only, never touches files).
-- Empty state with a short "pick the folder with your chapters" hint.
-
-**2. Reader**
-- Top bar: project name, `Chapter 3 of 120`, chapter-list icon.
-- Body: scrollable chapter text, restores saved scroll position.
-- Bottom bar: `Prev` / `Next`, disabled at first/last chapter.
-- System back returns to Library; position is saved on exit and on chapter change.
-
-**3. Chapter list**
-- Modal bottom sheet listing chapters in reading order, current one highlighted; tap to jump.
-
-## Markdown subset (hand-rolled renderer)
-
-Small parser, ~150 lines, no third-party markdown dependency:
-
-- ATX headings (`#`–`###`)
-- Bold / italic inline
-- Bullet and numbered lists
-- Blockquotes
-- Horizontal rules (`---`)
-- Fenced code blocks
-- Paragraphs and blank-line spacing
-
-`.txt` files bypass the parser and render as paragraphs. Anything unsupported degrades to plain text — never breaks the chapter.
-
-## Architecture
-
-Single Gradle module, no Hilt, no Room, no navigation library. Two composables + a small state holder:
-
-```
-app/src/main/java/com/mdreader/
-  MainActivity.kt            // sets content, hosts Library/Reader switch
-  data/LibraryStore.kt       // JSON load/save, project CRUD, progress
-  data/ChapterSource.kt      // SAF listing, reading, permission checks
-  data/NaturalSort.kt        // filename comparator
-  ui/LibraryScreen.kt
-  ui/ReaderScreen.kt
-  ui/ChapterListSheet.kt
-  md/MarkdownParser.kt       // -> List<Block>
-  md/MarkdownText.kt         // Blocks -> Compose
-```
-
-Toolchain: AGP 8.x, Gradle 8.13 (installed), JDK 21 (installed), compileSdk/targetSdk 36, minSdk 26.
-
-## Build order
-
-1. **Scaffold** — Gradle project, empty Compose app, prove it installs and launches on the phone.
-2. **Import + Library** — SAF picker, permission persistence, JSON store, natural sort, list/delete.
-3. **Reader** — load chapter, Prev/Next, chapter list, save/restore position.
-4. **Markdown** — parser + renderer, with JVM unit tests.
-5. **Edge cases** — empty folder, folder gone, unreadable file, first/last chapter, huge chapter.
-
-Each phase ends with something installable, so you can look at it on the phone and redirect early.
-
-## Acceptance criteria for v1
-
-- Import a folder of ~100 mixed `.md`/`.txt` files in under 3 seconds.
-- Chapters appear in natural, correct reading order.
-- Prev/Next moves exactly one chapter; buttons disable at the ends.
-- Kill the app, reopen, and the same chapter + scroll position returns.
-- Adding a file to the folder and tapping Refresh makes it appear in the right place.
-- Moving the folder away produces a readable error, not a crash.
-
-## Testing
-
-- **Unit tests (JVM):** natural sort ordering, markdown parser blocks.
-- **On-device:** debug APK via `adb install -r`. There is no emulator installed and no AVD, and `adb devices` currently shows nothing connected — so the phone will need to be plugged in with USB debugging on.
-- **Sample data:** a small folder of numbered chapters generated locally, plus your real folder pulled with `adb pull` once the phone is connected.
-
-## Deliberately not in v1
-
-Font size control, themes, bookmarks, in-book search, EPUB/HTML, subfolders inside a novel, cloud sync, Play Store release. All are additive later; none block the design. *(An S/M/L reader text-size control was added post-v1; fine-grained size/line-height tuning still lives in `Theme.kt`.)*
-
-## Resolved decisions
-
-1. App name / package id: `novel.md.reader` / `com.mdreader`.
-2. Minimum Android version: 8.0 (API 26); the test phone runs Android 11.
-3. Novel folders are flat — subfolders are ignored by import.
-
-## Deferred to v2
-
-Font size control, themes, bookmarks, in-book search, EPUB support, recursive
-subfolders, and a signed release build.
+## 📈 Future Horizons
+- **Recursive Folders:** Support for novels split across sub-directories.
+- **Enhanced Search:** Global search across local files and online sources.
+- **Customization:** User-definable fonts and line-heights for the novel reader.
