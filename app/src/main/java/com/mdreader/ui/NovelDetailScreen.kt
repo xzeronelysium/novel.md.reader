@@ -11,17 +11,17 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.animation.animateContentSize
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -70,6 +70,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -134,9 +135,12 @@ data class NovelDetailState(
     val totalChapters: Int = 0,
 )
 
+/** The site's number at the end of a chapter path (`.../chapter-2343`). */
+private val trailingDigits = Regex("(\\d+)$")
+
 /** Index of chapter [number]: matched by the site's own numbering, else by position. */
 private fun List<Chapter>.indexOfNumber(number: Int): Int? {
-    val byNumber = indexOfFirst { chapter -> Regex("(\\d+)$").find(chapter.uri)?.value?.toIntOrNull() == number }
+    val byNumber = indexOfFirst { chapter -> trailingDigits.find(chapter.uri)?.value?.toIntOrNull() == number }
     if (byNumber >= 0) return byNumber
     return (number - 1).takeIf { it in indices }
 }
@@ -231,16 +235,20 @@ fun NovelDetailScreen(
                     },
                 ) {
                 // The page slides down to make room for the strip rather than hiding under it.
-                val stripShown = if (state.refreshing || state.refreshResult != null) {
-                    1f
-                } else {
-                    pullState.distanceFraction.coerceIn(0f, 1f)
-                }
+                // The drag distance is read inside the layer block, so pulling redraws the list
+                // instead of recomposing it on every pixel of movement.
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer { translationY = stripShown * 44.dp.toPx() }
+                        .graphicsLayer {
+                            val shown = if (state.refreshing || state.refreshResult != null) {
+                                1f
+                            } else {
+                                pullState.distanceFraction.coerceIn(0f, 1f)
+                            }
+                            translationY = shown * 44.dp.toPx()
+                        }
                         .navigationBarsPadding(),
                 ) {
                     item {
@@ -811,11 +819,12 @@ private fun LibraryActions(
                 ) {
                     Micro(text = "Close", color = scheme.onSurface)
                     Spacer(Modifier.width(8.dp))
-                    Canvas(Modifier.size(8.dp)) {
-                        val stroke = 1.dp.toPx()
-                        drawLine(scheme.onSurface, Offset(0f, 0f), Offset(size.width, size.height), stroke)
-                        drawLine(scheme.onSurface, Offset(size.width, 0f), Offset(0f, size.height), stroke)
-                    }
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = scheme.onSurface,
+                    )
                 }
             }
 
@@ -823,7 +832,7 @@ private fun LibraryActions(
                 if (download.running) {
                     val fraction = if (download.total > 0) download.done.toFloat() / download.total else 0f
                     OutlineButton(
-                        text = "${download.done} / ${download.total} · ✕",
+                        text = "${download.done} / ${download.total} · STOP",
                         description = "Stop downloading",
                         onClick = onCancelDownload,
                         modifier = Modifier.weight(1f),
@@ -831,7 +840,7 @@ private fun LibraryActions(
                     )
                 } else {
                     OutlineButton(
-                        text = "↓ DOWNLOAD ▾",
+                        text = "DOWNLOAD",
                         description = "Download chapters",
                         onClick = { open = true },
                         modifier = Modifier.weight(1f),
@@ -967,7 +976,7 @@ private fun Stepper(
     }
 }
 
-/** A 48 dp target with a drawn hairline glyph. Press steps once; hold repeats. */
+/** A 48 dp target. Press steps once; hold repeats. */
 @Composable
 private fun StepButton(plus: Boolean, enabled: Boolean, onStep: () -> Unit) {
     val color = MaterialTheme.colorScheme.onSurface
@@ -1004,10 +1013,20 @@ private fun StepButton(plus: Boolean, enabled: Boolean, onStep: () -> Unit) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(12.dp)) {
-            val stroke = 1.dp.toPx()
-            drawLine(color, Offset(0f, size.height / 2f), Offset(size.width, size.height / 2f), stroke)
-            if (plus) drawLine(color, Offset(size.width / 2f, 0f), Offset(size.width / 2f, size.height), stroke)
+        if (plus) {
+            Icon(
+                imageVector = Icons.Filled.Add,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = color,
+            )
+        } else {
+            Box(
+                Modifier
+                    .width(14.dp)
+                    .height(2.dp)
+                    .background(color),
+            )
         }
     }
 }
@@ -1080,7 +1099,12 @@ private fun SplitDownload(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                TrashGlyph(color = scheme.primary.copy(alpha = if (canDelete) 1f else 0.35f))
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = scheme.primary.copy(alpha = if (canDelete) 1f else 0.35f),
+                )
             }
         }
         if (menuOpen) {
@@ -1259,32 +1283,6 @@ private fun PresetGroup(
     }
 }
 
-/** A trash can in hairlines: lid, handle, body and two ribs. */
-@Composable
-private fun TrashGlyph(color: Color) {
-    Canvas(Modifier.size(width = 14.dp, height = 16.dp)) {
-        val stroke = 1.dp.toPx()
-        val u = size.width / 14f
-        drawLine(color, Offset(0f, 3.5f * u), Offset(14f * u, 3.5f * u), stroke)
-        val handle = Path().apply {
-            moveTo(5f * u, 3.5f * u)
-            lineTo(5f * u, 1f * u)
-            lineTo(9f * u, 1f * u)
-            lineTo(9f * u, 3.5f * u)
-        }
-        drawPath(handle, color, style = Stroke(stroke))
-        val body = Path().apply {
-            moveTo(2f * u, 3.5f * u)
-            lineTo(3f * u, 15f * u)
-            lineTo(11f * u, 15f * u)
-            lineTo(12f * u, 3.5f * u)
-        }
-        drawPath(body, color, style = Stroke(stroke))
-        drawLine(color, Offset(5.5f * u, 6f * u), Offset(5.5f * u, 12f * u), stroke)
-        drawLine(color, Offset(8.5f * u, 6f * u), Offset(8.5f * u, 12f * u), stroke)
-    }
-}
-
 /** A square ink-outlined button; [fill] paints progress from the left behind the label. */
 @Composable
 private fun OutlineButton(
@@ -1337,7 +1335,7 @@ private fun OutlineButton(
 }
 
 @Composable
-private fun Stat(label: String, value: String, modifier: Modifier = Modifier, accent: Boolean = false) {
+internal fun Stat(label: String, value: String, modifier: Modifier = Modifier, accent: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier = modifier.padding(vertical = 12.dp)) {
         Micro(text = label)
@@ -1586,7 +1584,7 @@ private fun StatPlaceholder(label: String, modifier: Modifier = Modifier) {
 
 /** Flips the chapter list between oldest first and newest first. */
 @Composable
-private fun OrderChip(newestFirst: Boolean, onClick: () -> Unit) {
+internal fun OrderChip(newestFirst: Boolean, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier

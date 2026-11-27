@@ -1,7 +1,7 @@
 package com.mdreader.ui
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.SnackbarHostState
@@ -16,18 +16,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.mdreader.data.Chapter
 import com.mdreader.data.ChapterSource
+import com.mdreader.data.ProjectKind
+import com.mdreader.data.comics.ComicChallengeException
+import com.mdreader.data.comics.ComicException
+import com.mdreader.data.comics.ComicHit
+import com.mdreader.data.comics.ComicSources
+import com.mdreader.data.comics.ComicSource
 import com.mdreader.data.DownloadRequest
 import com.mdreader.data.formatBytes
 import com.mdreader.data.DownloadProgress
 import com.mdreader.data.Vault
-import com.mdreader.data.RewriteStore
 import com.mdreader.data.downloadChapters
 import com.mdreader.data.planDownload
 import com.mdreader.data.ImportException
 import com.mdreader.data.LibraryStore
 import com.mdreader.data.Project
 import com.mdreader.data.Progress
+import com.mdreader.data.ReadingHistory
 import com.mdreader.data.remapTo
 import com.mdreader.data.withChapters
 import com.mdreader.data.online.FreeWebNovelClient
@@ -38,16 +45,25 @@ import com.mdreader.data.summaryIsStale
 import com.mdreader.data.toChapters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 import java.util.UUID
 import com.mdreader.data.importFolder
 import com.mdreader.data.checkOnlineProject
 import com.mdreader.data.refreshOnlineProject
+import com.mdreader.data.comics.ComicCache
+import com.mdreader.data.comics.ComicMemo
+import com.mdreader.data.comics.ComicStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** How long a comic's details and chapter list stay fresh in memory within one session. */
+private const val COMIC_MEMO_TTL_MS = 10 * 60 * 1000L
 
 @Composable
 fun MDReaderApp() {
@@ -56,7 +72,6 @@ fun MDReaderApp() {
     val store = remember { LibraryStore(context.applicationContext) }
     val snackbarHostState = remember { SnackbarHostState() }
     val vault = remember { Vault.of(context.applicationContext) }
-    val rewrites = remember { RewriteStore.of(context.applicationContext) }
     // Bumped whenever a chapter is saved or deleted, so the page redraws its "saved" marks.
     var vaultTick by remember { mutableIntStateOf(0) }
     var download by remember { mutableStateOf(DownloadProgress()) }
@@ -78,16 +93,19 @@ fun MDReaderApp() {
     // A novel being read straight from the site without being in the library.
     var preview by remember { mutableStateOf<Project?>(null) }
     var previewStart by remember { mutableStateOf<Progress?>(null) }
+    // A comic's detail page, and the comic currently open in the strip reader.
+    var comicDetail by remember { mutableStateOf<ComicDetailState?>(null) }
+    var comicReading by remember { mutableStateOf<Project?>(null) }
+    var comicStart by remember { mutableStateOf<Progress?>(null) }
+    // Saving a comic to the user's own storage folder: the folder, and the job doing the writing.
+    var comicSave by remember { mutableStateOf(ComicSaveState()) }
+    var comicSaveJob by remember { mutableStateOf<Job?>(null) }
 
     LaunchedEffect(Unit) {
         projects = withContext(Dispatchers.IO) { store.load() }
         textSizeLevel = store.textSizeLevel()
         loading = false
     }
-
-    // Open the sealed settings once, in the background: the first frame must not wait for the
-    // Keystore, and by the time a chapter is read the cache is warm.
-    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { rewrites.settings() } }
 
     // Only problems are announced; successes (added, removed, updated, imported) stay silent.
     fun notify(message: String) {
@@ -116,12 +134,98 @@ fun MDReaderApp() {
         }
     }
 
+    // The folder comics are saved to as plain files. Picked once, kept across restarts.
+    val storagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        ComicStorage.keepAccess(context, uri)
+        val name = ComicStorage.folderName(uri)
+        scope.launch(Dispatchers.IO) { store.setStorageRoot(uri.toString(), name) }
+        comicSave = comicSave.copy(rootName = name, error = null, finished = null)
+    }
+
+    /**
+     * Saves chapters of the open comic to the picked folder, as real folders and files. NEXT
+     * counts start after the reading position; ALL starts at the first chapter. Chapters that
+     * are already complete on disk are skipped, and a stopped run resumes file by file.
+     */
+    fun saveComicToStorage(count: Int?) {
+        val page = comicDetail ?: return
+        val project = page.project ?: return
+        val source = page.source ?: return
+        val root = store.storageRoot() ?: run {
+            storagePicker.launch(null)
+            return
+        }
+        if (comicSave.running) return
+        val from = if (count == null) 0 else (page.resumeIndex ?: -1) + 1
+        val targets = project.chapters.drop(from).let { if (count == null) it else it.take(count) }
+        comicSave = comicSave.copy(
+            running = true,
+            error = null,
+            finished = null,
+            chapterDone = 0,
+            chapterTotal = targets.size,
+            pageDone = 0,
+            pageTotal = 0,
+        )
+        val treeUri = root.toUri()
+        val rootName = comicSave.rootName
+        comicSaveJob = scope.launch(Dispatchers.IO) {
+            var saved = 0
+            var failed: String? = null
+            for ((position, chapter) in targets.withIndex()) {
+                if (!isActive) break
+                val number = from + position
+                val label = "#${(number + 1).toString().padStart(3, '0')}"
+                comicSave = comicSave.copy(chapterLabel = label, pageDone = 0)
+                try {
+                    val pages = ComicCache.pages(context, source, chapter.uri)
+                    comicSave = comicSave.copy(pageTotal = pages.size)
+                    val wrote = ComicStorage.saveChapter(
+                        context = context,
+                        source = source,
+                        treeUri = treeUri,
+                        comicName = project.name,
+                        chapterName = "$label ${chapter.name}",
+                        pages = pages,
+                        onPage = { done -> comicSave = comicSave.copy(pageDone = done) },
+                    )
+                    if (wrote == null) {
+                        // Already complete on disk; not saved again, but not an error either.
+                    } else if (wrote < pages.size) {
+                        failed = "Some pages of chapter ${number + 1} didn't save. Check your connection and run it again."
+                        break
+                    } else {
+                        saved++
+                    }
+                    comicSave = comicSave.copy(chapterDone = position + 1)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failed = (e as? ComicException)?.message ?: "Couldn't save chapter ${number + 1}."
+                    break
+                }
+            }
+            comicSave = comicSave.copy(
+                running = false,
+                error = failed,
+                finished = failed ?: when {
+                    saved == 0 && targets.isEmpty() -> "Nothing left to save from here."
+                    saved == 0 -> "Everything was already saved."
+                    else -> "Saved $saved chapter${if (saved == 1) "" else "s"} to $rootName."
+                },
+            )
+        }
+    }
+
     var check by remember { mutableStateOf(LibraryCheck()) }
 
     /** Pull-to-check on the shelf: every online novel in turn, so the order and "+N" update live. */
     fun checkAll() {
         if (check.refreshing) return
-        val targets = projects.filter { it.isOnline }
+        val targets = projects.filter { it.isOnline && !it.isComic }
         if (targets.isEmpty()) return
         check = LibraryCheck(refreshing = true, total = targets.size)
         scope.launch {
@@ -212,13 +316,25 @@ fun MDReaderApp() {
         withContext(Dispatchers.IO) {
             store.remove(project.id)
             vault.deleteAll(project)
-            rewrites.deleteAll(project)
             CoverCache.evict(context.applicationContext, project.coverUrl)
         }
         vaultTick++
     }
 
     val openProject = preview ?: projects.firstOrNull { it.id == openProjectId }
+
+    // The history list refetches whenever a reader opens or closes, or the shelf changes.
+    var historyTick by remember { mutableStateOf(0) }
+    val history by produceState(
+        emptyList<ReadingHistory>(),
+        projects,
+        comicReading,
+        preview,
+        detailPath,
+        historyTick,
+    ) {
+        value = withContext(Dispatchers.IO) { store.history() }
+    }
 
     fun libraryEntry(path: String) = projects.firstOrNull { it.onlinePath == path }
 
@@ -286,7 +402,7 @@ fun MDReaderApp() {
                 )
                 val chapters = novel.chapters.toChapters()
                 val project = Project(
-                    id = UUID.randomUUID().toString(),
+                    id = stableNovelId(path),
                     name = novel.details.title,
                     treeUri = "",
                     chapters = chapters,
@@ -303,12 +419,135 @@ fun MDReaderApp() {
                     votes = novel.details.votes,
                     summaryAt = System.currentTimeMillis(),
                 )
-                detail = NovelDetailState(details = novel.details, project = project, inLibrary = false)
+                detail = NovelDetailState(
+                    details = novel.details,
+                    project = project,
+                    inLibrary = false,
+                    // A search-read novel remembers too: the stable id carries the position.
+                    resumeIndex = store.progress(project.id)?.remapTo(chapters)?.chapterIndex,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 detail = NovelDetailState(title = title, error = (e as? OnlineException)?.message ?: "Couldn't load that novel.")
             }
+        }
+    }
+
+    /**
+     * Opens a comic fast: the search hit's cover shows immediately, details and the chapter list
+     * fetch in parallel and render as each lands, everything within the session answers from
+     * [ComicMemo], and the chapter you'd land on starts warming before you tap Read.
+     */
+    fun openComic(source: ComicSource, hit: ComicHit) {
+        comicSave = ComicSaveState(rootName = store.storageRootName())
+        comicDetail = ComicDetailState(
+            sourceId = source.id,
+            path = hit.path,
+            title = hit.title,
+            coverUrl = hit.cover,
+            loading = true,
+        )
+        scope.launch {
+            try {
+                coroutineScope {
+                    val detailD = async {
+                        ComicMemo.remember("details|${source.id}|${hit.path}", COMIC_MEMO_TTL_MS) {
+                            source.details(hit.path)
+                        }
+                    }
+                    val chapterD = async {
+                        ComicMemo.remember("chapters|${source.id}|${hit.path}", COMIC_MEMO_TTL_MS) {
+                            source.chapters(hit.path)
+                        }
+                    }
+                    val saved = projects.firstOrNull {
+                        it.isComic && it.sourceId == source.id && it.onlinePath == hit.path
+                    }
+                    // The poster renders the moment details arrive; the chapter list fills in behind.
+                    val details = detailD.await()
+                    comicDetail = ComicDetailState(
+                        sourceId = source.id,
+                        path = hit.path,
+                        title = details.title,
+                        details = details,
+                        coverUrl = hit.cover,
+                        chaptersLoading = true,
+                        loading = false,
+                        inLibrary = saved != null,
+                    )
+                    val chapters = chapterD.await()
+                    val project = Project(
+                        // A comic's identity is its source and path, so reading memory survives
+                        // an open that never touched the Add to library button.
+                        id = saved?.id ?: stableComicId(source.id, hit.path),
+                        name = details.title,
+                        treeUri = "",
+                        chapters = chapters.map { Chapter(name = it.title, uri = it.path, remote = true) },
+                        importedAt = saved?.importedAt ?: System.currentTimeMillis(),
+                        onlinePath = hit.path,
+                        totalChapters = chapters.size,
+                        coverUrl = details.cover.ifEmpty { hit.cover }.ifEmpty { null },
+                        author = details.author,
+                        status = details.status,
+                        synopsis = details.description,
+                        genres = details.genres,
+                        summaryAt = System.currentTimeMillis(),
+                        kind = ProjectKind.COMIC,
+                        sourceId = source.id,
+                    )
+                    val resume = store.progress(project.id)?.remapTo(project.chapters)?.chapterIndex
+                    comicDetail = ComicDetailState(
+                        sourceId = source.id,
+                        path = hit.path,
+                        title = details.title,
+                        details = details,
+                        chapters = chapters,
+                        coverUrl = hit.cover,
+                        loading = false,
+                        inLibrary = saved != null,
+                        project = project,
+                        resumeIndex = resume,
+                    )                    // Warm the chapter Continue or Read lands on, so the reader opens loaded.
+                    project.chapters.getOrNull(resume ?: 0)?.let { first ->
+                        scope.launch(Dispatchers.IO) {
+                            runCatching { ComicCache.pages(context, source, first.uri) }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = (e as? ComicException)?.message
+                    ?: (e as? ComicChallengeException)?.message
+                    ?: "Couldn't load that comic."
+                val partial = comicDetail
+                comicDetail = if (partial?.details != null) {
+                    // The poster is up; only the chapter list failed, so keep what's showing.
+                    partial.copy(chaptersLoading = false, chaptersError = message)
+                } else {
+                    ComicDetailState(
+                        sourceId = source.id,
+                        path = hit.path,
+                        title = hit.title,
+                        coverUrl = hit.cover,
+                        loading = false,
+                        error = message,
+                    )
+                }
+            }
+        }
+    }
+
+    /** A history row reopens whatever it was: the comic's source, or the novel's page. */
+    fun openHistory(entry: ReadingHistory) {
+        val source = entry.sourceId?.let { ComicSources.byId(it) }
+        if (source != null) {
+            openComic(source, ComicHit(title = entry.title, path = entry.onlinePath))
+        } else {
+            cameFrom = null
+            detailPath = entry.onlinePath
+            loadDetail(entry.onlinePath, entry.title)
         }
     }
 
@@ -370,7 +609,81 @@ fun MDReaderApp() {
         }
     }
 
-    if (openProject == null && authorPage != null) {
+    if (comicReading != null) {
+        val reading = comicReading!!
+        val source = ComicSources.byId(reading.sourceId) ?: ComicSources.all.first()
+        ComicReaderScreen(
+            project = reading,
+            source = source,
+            initialProgress = comicStart,
+            initialZoom = store.comicZoomMode(reading.id),
+            onModeChange = { zoom ->
+                scope.launch(Dispatchers.IO) { store.setComicZoomMode(reading.id, zoom) }
+            },
+            onBack = {
+                comicStart = null
+                comicReading = null
+            },
+            onProgress = { progress ->
+                // Saved whether or not the shelf write has landed: a comic's reading position
+                // is remembered from the first page turned, and the history row with it.
+                scope.launch(Dispatchers.IO) {
+                    store.setProgress(reading.id, progress)
+                    store.recordHistory(historyOf(reading, progress))
+                }
+            },
+        )
+    } else if (comicDetail != null) {
+        val page = comicDetail!!
+        ComicDetailScreen(
+            state = page,
+            storage = comicSave,
+            onBack = { comicDetail = null },
+            onRetry = {
+                val source = ComicSources.byId(page.sourceId)
+                if (source != null) openComic(source, ComicHit(title = page.title, path = page.path))
+            },
+            onPickStorage = { storagePicker.launch(null) },
+            onSave = ::saveComicToStorage,
+            onStopSave = {
+                comicSaveJob?.cancel()
+                comicSave = comicSave.copy(running = false, finished = null)
+            },
+            onRead = { index ->
+                page.project?.let { project ->
+                    comicStart = Progress(chapterIndex = index)
+                    comicReading = project
+                }
+            },
+            onContinue = {
+                page.project?.let { project ->
+                    comicStart = store.progress(project.id)?.remapTo(project.chapters)
+                    comicReading = project
+                }
+            },
+            onToggleLibrary = {
+                val project = page.project ?: return@ComicDetailScreen
+                scope.launch {
+                    if (page.inLibrary) {
+                        removeNovel(project)
+                    } else {
+                        withContext(Dispatchers.IO) { store.addOrReplace(project) }
+                    }
+                    projects = withContext(Dispatchers.IO) { store.load() }
+                    comicDetail = page.copy(
+                        inLibrary = !page.inLibrary,
+                        resumeIndex = if (page.inLibrary) null else page.resumeIndex,
+                    )
+                }
+            },
+            onOpenLibrary = {
+                page.project?.let { project ->
+                    comicStart = store.progress(project.id)?.remapTo(project.chapters)
+                    comicReading = project
+                }
+            },
+        )
+    } else if (openProject == null && authorPage != null) {
         val author = authorPage!!
         AuthorScreen(
             name = author.name,
@@ -461,6 +774,12 @@ fun MDReaderApp() {
         LibraryScreen(
             projects = projects,
             progressOf = { store.progress(it) },
+            history = history,
+            onOpenHistory = ::openHistory,
+            onClearHistory = {
+                scope.launch(Dispatchers.IO) { store.clearHistory() }
+                historyTick++
+            },
             loading = loading,
             importing = importing,
             snackbarHostState = snackbarHostState,
@@ -471,26 +790,31 @@ fun MDReaderApp() {
                 detailPath = hit.path
                 loadDetail(hit.path, hit.title)
             },
+            onOpenComic = ::openComic,
             onOpen = { project ->
-                val path = project.onlinePath
-                if (path != null) {
-                    detailPath = path
-                    loadDetail(path, project.name)
-                } else {
-                    openProjectId = project.id
+                when {
+                    project.isComic -> {
+                        comicStart = store.progress(project.id)
+                        comicReading = project
+                    }
+                    project.onlinePath != null -> {
+                        detailPath = project.onlinePath
+                        loadDetail(project.onlinePath, project.name)
+                    }
+                    else -> openProjectId = project.id
                 }
             },
             onRefresh = { project ->
                 scope.launch {
-                    val result = if (project.isOnline) {
-                        refreshOnlineProject(project, store)
-                    } else {
-                        withContext(Dispatchers.IO) { refreshProject(context, project, store) }
+                    val result = when {
+                        project.isComic -> refreshComicChapters(project, store)
+                        project.isOnline -> refreshOnlineProject(project, store)
+                        else -> withContext(Dispatchers.IO) { refreshProject(context, project, store) }
                     }
                     reloadLibrary()
                     result.fold(
                         onSuccess = { },
-                        onFailure = { notify(it.message ?: "Couldn't refresh that novel.") },
+                        onFailure = { notify(it.message ?: "Couldn't refresh that title.") },
                     )
                 }
             },
@@ -520,13 +844,59 @@ fun MDReaderApp() {
                 if (detail.inLibrary && detail.project?.id == openProject.id) {
                     detail = detail.copy(resumeIndex = progress.chapterIndex)
                 }
-                // Only novels in the library remember where you were.
+                // Novels remember too: the stable id keeps a search-read's position, and the
+                // history row survives even when the shelf never saw it.
                 scope.launch(Dispatchers.IO) {
-                    if (store.find(openProject.id) != null) store.setProgress(openProject.id, progress)
+                    store.setProgress(openProject.id, progress)
+                    store.recordHistory(historyOf(openProject, progress))
                 }
             },
         )
     }
+}
+
+/**
+ * Re-reads a comic's chapter list from its source and stores it, keeping the same project id so
+ * the saved reading position still points at the same chapter path.
+ */
+/** A comic's shelf identity is its source and path, so reading memory finds it again. */
+private fun stableComicId(sourceId: String, path: String): String =
+    UUID.nameUUIDFromBytes("comic|$sourceId|$path".toByteArray()).toString()
+
+/** A novel read from search carries its path as identity, so it resumes on the next open too. */
+private fun stableNovelId(path: String): String =
+    UUID.nameUUIDFromBytes("novel|$path".toByteArray()).toString()
+
+/** One reading session as history: enough identity to reopen, enough position to resume. */
+private fun historyOf(project: Project, progress: Progress) = ReadingHistory(
+    id = project.id,
+    kind = project.kind,
+    sourceId = project.sourceId,
+    onlinePath = project.onlinePath.orEmpty(),
+    title = project.name,
+    coverUrl = project.coverUrl,
+    totalChapters = project.totalChapters ?: project.chapters.size,
+    chapterIndex = progress.chapterIndex,
+    chapterKey = progress.chapterKey,
+    scrollIndex = progress.scrollIndex,
+)
+
+private suspend fun refreshComicChapters(
+    project: Project,
+    store: LibraryStore,
+): Result<Project> = runCatching {
+    val source = ComicSources.byId(project.sourceId)
+        ?: throw ComicException("This comic has no source saved.")
+    val path = project.onlinePath ?: throw ComicException("This comic has no series link saved.")
+    val chapters = source.chapters(path)
+    val updated = project.copy(
+        chapters = chapters.map { Chapter(name = it.title, uri = it.path, remote = true) },
+        totalChapters = chapters.size,
+        updatedAt = System.currentTimeMillis(),
+        newChapters = 0,
+    )
+    store.addOrReplace(updated)
+    updated
 }
 
 /**
@@ -538,7 +908,7 @@ private fun refreshProject(
     project: Project,
     store: LibraryStore,
 ): Result<Project> = runCatching {
-    val treeUri = Uri.parse(project.treeUri)
+    val treeUri = project.treeUri.toUri()
     if (!ChapterSource.hasPermission(context, treeUri)) {
         throw ImportException("The folder is no longer accessible. Import it again.")
     }

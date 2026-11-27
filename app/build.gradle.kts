@@ -14,8 +14,8 @@ android {
         applicationId = "com.mdreader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 9
+        versionName = "1.8"
         // AndroidX ships ~85 locales; keep only the ones the app could use.
         resourceConfigurations += listOf("en", "ja")
     }
@@ -57,8 +57,11 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
 
     implementation("org.jsoup:jsoup:1.18.3")
+    // The comic layer, for sites behind Cloudflare: HTTP/2 and browser-like header order.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     // The android.jar stubs of org.json throw on the JVM; tests need the real thing.

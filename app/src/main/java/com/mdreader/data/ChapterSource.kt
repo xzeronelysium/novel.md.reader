@@ -16,6 +16,12 @@ object ChapterSource {
 
     private val SUPPORTED_EXTENSIONS = setOf("md", "markdown", "txt", "text")
 
+    /**
+     * A chapter this long is not a chapter, and holding it as one String twice (file + parse)
+     * would be enough to run a phone out of memory. Larger files are refused with a clear error.
+     */
+    private const val MAX_CHAPTER_CHARS = 12_000_000
+
     fun hasPermission(context: Context, treeUri: Uri): Boolean =
         context.contentResolver.persistedUriPermissions.any {
             it.uri.toString() == treeUri.toString() && it.isReadPermission
@@ -81,6 +87,21 @@ object ChapterSource {
     fun read(context: Context, uri: Uri): String {
         val stream = context.contentResolver.openInputStream(uri)
             ?: throw IOException("Could not open ${uri.lastPathSegment}")
-        return stream.use { it.bufferedReader().use { reader -> reader.readText() } }
+        return stream.use { input ->
+            val reader = input.bufferedReader()
+            val builder = StringBuilder()
+            val buffer = CharArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val read = reader.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > MAX_CHAPTER_CHARS) {
+                    throw IOException("That file is too large to open as a chapter.")
+                }
+                builder.append(buffer, 0, read)
+            }
+            builder.toString()
+        }
     }
 }

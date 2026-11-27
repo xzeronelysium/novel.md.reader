@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,22 +41,29 @@ import com.mdreader.md.ChatMessage
 import com.mdreader.md.chatMessages
 import com.mdreader.md.isSystemDisplay
 
+/**
+ * The spans as one AnnotatedString. Remembered per block and palette, so a recomposition of the
+ * item (a theme change, a re-entry while scrolling) doesn't rebuild every span's style.
+ */
 @Composable
 fun List<InlineSpan>.toAnnotatedString(italicColor: Color = Color.Unspecified): AnnotatedString {
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
-    return buildAnnotatedString {
-        this@toAnnotatedString.forEach { span ->
-            withStyle(
-                SpanStyle(
-                    fontWeight = if (span.bold) FontWeight.Bold else null,
-                    fontStyle = if (span.italic) FontStyle.Italic else null,
-                    fontFamily = if (span.code) FontFamily.Monospace else null,
-                    textDecoration = if (span.strike) TextDecoration.LineThrough else null,
-                    background = if (span.code) codeBackground else Color.Unspecified,
-                    color = if (span.italic) italicColor else Color.Unspecified,
-                )
-            ) {
-                append(span.text)
+    val spans = this
+    return remember(spans, codeBackground, italicColor) {
+        buildAnnotatedString {
+            spans.forEach { span ->
+                withStyle(
+                    SpanStyle(
+                        fontWeight = if (span.bold) FontWeight.Bold else null,
+                        fontStyle = if (span.italic) FontStyle.Italic else null,
+                        fontFamily = if (span.code) FontFamily.Monospace else null,
+                        textDecoration = if (span.strike) TextDecoration.LineThrough else null,
+                        background = if (span.code) codeBackground else Color.Unspecified,
+                        color = if (span.italic) italicColor else Color.Unspecified,
+                    )
+                ) {
+                    append(span.text)
+                }
             }
         }
     }
@@ -64,14 +72,9 @@ fun List<InlineSpan>.toAnnotatedString(italicColor: Color = Color.Unspecified): 
 @Composable
 fun BlockView(block: Block) {
     val colors = MaterialTheme.colorScheme
-    val bodyStyle = TextStyle(
-        fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.Normal,
-        fontSize = 17.sp,
-        lineHeight = 32.sp,
-        letterSpacing = 0.1.sp,
-        color = colors.onSurface,
-    )
+    // The theme's bodyLarge is exactly this measure; only its ink has to be set explicitly,
+    // because a Text outside a Surface falls back to black rather than the theme's onSurface.
+    val bodyStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface)
 
     // System and status screens get their own flat panel, whatever Markdown they arrived in.
     if (block.isSystemDisplay()) {
@@ -120,7 +123,7 @@ fun BlockView(block: Block) {
 
         // Thoughts (italic in the prose) take a softer ink, so they read apart from speech.
         is Block.Paragraph -> Text(
-            text = block.spans.toAnnotatedString(italicColor = colors.onSurfaceVariant).withWikiLinks(block),
+            text = block.spans.toAnnotatedString(italicColor = colors.onSurfaceVariant),
             style = bodyStyle,
             modifier = Modifier
                 .fillMaxWidth()
@@ -140,7 +143,7 @@ fun BlockView(block: Block) {
                 modifier = Modifier.padding(top = 11.dp),
             )
             Text(
-                text = block.spans.toAnnotatedString().withWikiLinks(block),
+                text = block.spans.toAnnotatedString(),
                 style = bodyStyle,
                 modifier = Modifier.weight(1f),
             )
@@ -164,7 +167,7 @@ fun BlockView(block: Block) {
                     .padding(top = 4.dp),
             )
             Text(
-                text = block.spans.toAnnotatedString().withWikiLinks(block),
+                text = block.spans.toAnnotatedString(),
                 style = bodyStyle,
                 modifier = Modifier.weight(1f),
             )
@@ -184,7 +187,7 @@ fun BlockView(block: Block) {
                     .background(colors.outline),
             )
             Text(
-                text = block.spans.toAnnotatedString().withWikiLinks(block),
+                text = block.spans.toAnnotatedString(),
                 style = bodyStyle.copy(
                     fontStyle = FontStyle.Italic,
                     color = colors.onSurfaceVariant,
@@ -318,7 +321,7 @@ private fun ChatPanel(messages: List<ChatMessage>, single: Boolean) {
                         )
                     }
                     Text(
-                        text = message.spans.toAnnotatedString().withWikiLinks(message),
+                        text = message.spans.toAnnotatedString(),
                         style = TextStyle(
                             fontFamily = FontFamily.SansSerif,
                             fontSize = 15.sp,

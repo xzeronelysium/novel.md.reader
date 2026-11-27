@@ -1,26 +1,102 @@
 package com.mdreader.ui
 
-import androidx.compose.foundation.Canvas
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import java.util.Locale
 
 /** The one horizontal margin every screen shares. */
 val ScreenPad = 28.dp
+
+/*
+ * Kuro: the comic skin. Novels live on warm paper with hairlines; comics live
+ * on an always-black stage whatever the system theme says — artwork first,
+ * paper-white ink, vermilion issue numbers, no light mode.
+ */
+object ComicSkin {
+    /** The poster page and sheets. */
+    val Stage = Color(0xFF0D0D0F)
+
+    /** The reader's deeper black, so pages read edge-to-edge. */
+    val PageStage = Color(0xFF000000)
+
+    /** Loading placeholders and empty poster backs. */
+    val Panel = Color(0xFF131316)
+
+    /** Paper-white text, the inverse of the novel's ink. */
+    val Ink = Color(0xFFF2EFE8)
+
+    /** Quiet metadata on black. */
+    val Sub = Color(0xFF8E8B85)
+
+    /** The dark-theme vermilion, bright enough for a black stage. */
+    val Accent = Color(0xFFE05A44)
+
+    /** Hairline on black. */
+    val Line = Color(0xFF242427)
+
+    /** Chip and outline borders on black. */
+    val LineSoft = Color(0x59FFFFFF)
+}
+
+/**
+ * The system bars for a comic screen: black stage in both themes, so the status and navigation
+ * icons read as paper while it shows, and hand the appearance back to the theme on leave.
+ */
+@Composable
+fun ComicSystemBars() {
+    val view = LocalView.current
+    val context = LocalContext.current
+    val dark = isSystemInDarkTheme()
+    DisposableEffect(view, context, dark) {
+        val window = context.findActivity()?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = false
+            controller.isAppearanceLightNavigationBars = false
+            onDispose {
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+        } else {
+            onDispose { }
+        }
+    }
+}
+
+/** The activity behind this context, whatever wrappers Compose wrapped it in. */
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 /** Small uppercase metadata, the Swiss label of the layout. */
 @Composable
@@ -88,37 +164,39 @@ fun SealDot(
 
 enum class ArrowDirection { Left, Right }
 
-/** Hairline arrow drawn on the pixel grid, so it stays optically centered. */
+/** Platform back and forward icons. They mirror in right-to-left layouts. */
 @Composable
 fun QuietArrow(
     direction: ArrowDirection,
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onSurface,
 ) {
-    Canvas(
-        modifier = modifier.size(width = 14.dp, height = 10.dp),
-    ) {
-        val stroke = 1.1.dp.toPx()
-        val middle = size.height / 2f
-        val startX = if (direction == ArrowDirection.Left) size.width else 0f
-        val tipX = if (direction == ArrowDirection.Left) 0f else size.width
-        val wingX = if (direction == ArrowDirection.Left) 4.dp.toPx() else size.width - 4.dp.toPx()
+    Icon(
+        imageVector = if (direction == ArrowDirection.Left) {
+            Icons.AutoMirrored.Filled.ArrowBack
+        } else {
+            Icons.AutoMirrored.Filled.ArrowForward
+        },
+        contentDescription = null,
+        modifier = modifier.size(22.dp),
+        tint = color,
+    )
+}
 
-        drawLine(color, Offset(startX, middle), Offset(tipX, middle), stroke, cap = StrokeCap.Round)
-        drawLine(
-            color,
-            Offset(tipX, middle),
-            Offset(wingX, middle - 3.dp.toPx()),
-            stroke,
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color,
-            Offset(tipX, middle),
-            Offset(wingX, middle + 3.dp.toPx()),
-            stroke,
-            cap = StrokeCap.Round,
-        )
+/** Back arrow in the comic skin's paper-white ink, for the always-black comic screens. */
+@Composable
+internal fun ComicBackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clickable(onClick = onBack)
+            .semantics {
+                contentDescription = "Back"
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        QuietArrow(direction = ArrowDirection.Left, color = ComicSkin.Ink)
     }
 }
 
@@ -127,19 +205,10 @@ fun SearchGlyph(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
-    Canvas(
-        modifier = modifier.size(13.dp),
-    ) {
-        val stroke = 1.dp.toPx()
-        val radius = size.minDimension * 0.32f
-        val center = Offset(size.width * 0.42f, size.height * 0.42f)
-        drawCircle(color, radius = radius, center = center, style = Stroke(width = stroke))
-        drawLine(
-            color,
-            start = Offset(center.x + radius * 0.72f, center.y + radius * 0.72f),
-            end = Offset(size.width, size.height),
-            strokeWidth = stroke,
-            cap = StrokeCap.Round,
-        )
-    }
+    Icon(
+        imageVector = Icons.Filled.Search,
+        contentDescription = null,
+        modifier = modifier.size(20.dp),
+        tint = color,
+    )
 }

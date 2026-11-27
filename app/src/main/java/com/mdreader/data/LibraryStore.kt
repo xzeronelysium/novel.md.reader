@@ -19,8 +19,16 @@ class LibraryStore(private val filesDir: File) {
 
     private val libraryFile = File(filesDir, "library.json")
     private val progressFile = File(filesDir, "progress.json")
+    private val historyFile = File(filesDir, "history.json")
     private val projects = mutableListOf<Project>()
     private val progressById = mutableMapOf<String, Progress>()
+    /** Insertion-ordered: the most recent reading session is the last one in. */
+    private val historyById = LinkedHashMap<String, ReadingHistory>()
+    /** Comics remember which view they were last read in: true = the zoom pager. */
+    private val comicZoomById = mutableMapOf<String, Boolean>()
+    /** The folder the user picked for saving comics to storage, once and for all. */
+    private var storageRoot: String? = null
+    private var storageRootName: String? = null
     private var loaded = false
     private var textSizeLevel = 1
 
@@ -96,6 +104,72 @@ class LibraryStore(private val filesDir: File) {
         persistProgress()
     }
 
+    /** Every session ever read, newest last; shelf entries and search-reads alike. */
+    @Synchronized
+    fun history(): List<ReadingHistory> {
+        ensureLoaded()
+        return historyById.values.toList()
+    }
+
+    /** Upserts one reading session, newest last, and forgets all but the last thirty. */
+    @Synchronized
+    fun recordHistory(entry: ReadingHistory) {
+        ensureLoaded()
+        historyById.remove(entry.id)
+        historyById[entry.id] = entry.copy(updatedAt = System.currentTimeMillis())
+        while (historyById.size > 30) historyById.remove(historyById.keys.first())
+        persistHistory()
+    }
+
+    @Synchronized
+    fun clearHistory() {
+        ensureLoaded()
+        if (historyById.isEmpty()) return
+        historyById.clear()
+        persistHistory()
+    }
+
+    /** Whether a comic was last read in the zoom pager rather than the vertical strip. */
+    @Synchronized
+    fun comicZoomMode(projectId: String): Boolean {
+        ensureLoaded()
+        return comicZoomById[projectId] == true
+    }
+
+    @Synchronized
+    fun setComicZoomMode(projectId: String, zoom: Boolean) {
+        ensureLoaded()
+        if (comicZoomById[projectId] == zoom) return
+        if (zoom) {
+            comicZoomById[projectId] = true
+        } else {
+            comicZoomById.remove(projectId)
+        }
+        persistProgress()
+    }
+
+    /** The picked storage folder for saving comics outside the app, or null before the first pick. */
+    @Synchronized
+    fun storageRoot(): String? {
+        ensureLoaded()
+        return storageRoot
+    }
+
+    @Synchronized
+    fun storageRootName(): String? {
+        ensureLoaded()
+        return storageRootName
+    }
+
+    @Synchronized
+    fun setStorageRoot(uri: String, name: String) {
+        ensureLoaded()
+        if (uri == storageRoot) return
+        storageRoot = uri
+        storageRootName = name
+        persistProgress()
+    }
+
     private fun ensureLoaded() {
         if (loaded) return
         loaded = true
@@ -125,6 +199,14 @@ class LibraryStore(private val filesDir: File) {
         if (progressRoot != null) {
             readProgress(progressRoot.optJSONObject("progress") ?: JSONObject())
             textSizeLevel = progressRoot.optInt("textSize", 1).coerceIn(0, 2)
+            val zoom = progressRoot.optJSONObject("comicZoom")
+            if (zoom != null) {
+                zoom.keys().forEach { id ->
+                    if (zoom.optBoolean(id, false)) comicZoomById[id] = true
+                }
+            }
+            storageRoot = progressRoot.optString("storageRoot").ifEmpty { null }
+            storageRootName = progressRoot.optString("storageRootName").ifEmpty { null }
         } else {
             legacyProgress?.let(::readProgress)
             legacyTextSize?.let { textSizeLevel = it }
@@ -133,6 +215,35 @@ class LibraryStore(private val filesDir: File) {
                 val moved = runCatching { persistProgress() }.isSuccess && progressFile.isFile
                 // Only then drop the old block, and only if the new one really is on disk.
                 if (moved) runCatching { persistLibrary() }
+            }
+        }
+
+        historyFile.takeIf { it.isFile }?.let { file ->
+            runCatching {
+                val root = JSONObject(file.readText())
+                val entries = root.optJSONArray("history") ?: JSONArray()
+                for (i in 0 until entries.length()) {
+                    runCatching {
+                        val item = entries.getJSONObject(i)
+                        val entry = ReadingHistory(
+                            id = item.getString("id"),
+                            kind = if (item.optString("kind") == "COMIC") ProjectKind.COMIC else ProjectKind.NOVEL,
+                            sourceId = item.optString("sourceId").ifEmpty { null },
+                            onlinePath = item.optString("onlinePath"),
+                            title = item.optString("title"),
+                            coverUrl = item.optString("coverUrl").ifEmpty { null },
+                            totalChapters = item.optInt("totalChapters", 0),
+                            chapterIndex = item.optInt("chapterIndex", 0),
+                            chapterKey = item.optString("chapterKey").ifEmpty { null },
+                            scrollIndex = item.optInt("scrollIndex", 0),
+                            updatedAt = item.optLong("updatedAt", 0L),
+                        )
+                        if (entry.onlinePath.isNotEmpty() && entry.title.isNotEmpty()) {
+                            historyById.remove(entry.id)
+                            historyById[entry.id] = entry
+                        }
+                    }
+                }
             }
         }
     }
@@ -148,9 +259,6 @@ class LibraryStore(private val filesDir: File) {
                     scrollOffset = value.optInt("scrollOffset", 0),
                     chapterKey = value.optString("chapterKey").ifEmpty { null },
                     updatedAt = value.optLong("updatedAt", 0L),
-                    rewritten = value.optBoolean("rewritten", false),
-                    rewriteIndex = value.optInt("rewriteIndex", 0),
-                    rewriteOffset = value.optInt("rewriteOffset", 0),
                 )
             }
         }
@@ -192,6 +300,8 @@ class LibraryStore(private val filesDir: File) {
             rating = item.optString("rating"),
             votes = item.optInt("votes", 0),
             summaryAt = item.optLong("summaryAt", 0L),
+            kind = if (item.optString("kind") == "comic") ProjectKind.COMIC else ProjectKind.NOVEL,
+            sourceId = item.optString("sourceId").ifEmpty { null },
         )
     }
 
@@ -228,6 +338,8 @@ class LibraryStore(private val filesDir: File) {
                     .apply { if (project.rating.isNotEmpty()) put("rating", project.rating) }
                     .apply { if (project.votes > 0) put("votes", project.votes) }
                     .apply { if (project.summaryAt > 0) put("summaryAt", project.summaryAt) }
+                    .apply { if (project.kind == ProjectKind.COMIC) put("kind", "comic") }
+                    .apply { project.sourceId?.let { put("sourceId", it) } }
                     .put("chapters", chaptersArray)
             )
         }
@@ -235,6 +347,27 @@ class LibraryStore(private val filesDir: File) {
     }
 
     /** Position and text size: small and written on every scroll pause. */
+    private fun persistHistory() {
+        val historyArray = JSONArray()
+        historyById.values.forEach { entry ->
+            historyArray.put(
+                JSONObject()
+                    .put("id", entry.id)
+                    .put("kind", if (entry.kind == ProjectKind.COMIC) "COMIC" else "NOVEL")
+                    .apply { entry.sourceId?.let { put("sourceId", it) } }
+                    .put("onlinePath", entry.onlinePath)
+                    .put("title", entry.title)
+                    .apply { entry.coverUrl?.let { put("coverUrl", it) } }
+                    .put("totalChapters", entry.totalChapters)
+                    .put("chapterIndex", entry.chapterIndex)
+                    .apply { entry.chapterKey?.let { put("chapterKey", it) } }
+                    .put("scrollIndex", entry.scrollIndex)
+                    .put("updatedAt", entry.updatedAt),
+            )
+        }
+        writeAtomically(historyFile, JSONObject().put("history", historyArray).toString())
+    }
+
     private fun persistProgress() {
         val progressObject = JSONObject()
         progressById.forEach { (id, progress) ->
@@ -246,15 +379,17 @@ class LibraryStore(private val filesDir: File) {
                     .put("scrollOffset", progress.scrollOffset)
                     .apply { progress.chapterKey?.let { put("chapterKey", it) } }
                     .put("updatedAt", progress.updatedAt)
-                    .put("rewritten", progress.rewritten)
-                    .put("rewriteIndex", progress.rewriteIndex)
-                    .put("rewriteOffset", progress.rewriteOffset)
             )
         }
-        writeAtomically(
-            progressFile,
-            JSONObject().put("progress", progressObject).put("textSize", textSizeLevel).toString(),
-        )
+        val zoomObject = JSONObject()
+        comicZoomById.forEach { (id, zoom) -> zoomObject.put(id, zoom) }
+        val progressJson = JSONObject()
+            .put("progress", progressObject)
+            .put("textSize", textSizeLevel)
+            .put("comicZoom", zoomObject)
+        storageRoot?.let { progressJson.put("storageRoot", it) }
+        storageRootName?.let { progressJson.put("storageRootName", it) }
+        writeAtomically(progressFile, progressJson.toString())
     }
 
     private fun writeAtomically(target: File, text: String) {

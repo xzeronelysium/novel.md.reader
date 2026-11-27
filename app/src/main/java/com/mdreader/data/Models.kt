@@ -1,5 +1,8 @@
 package com.mdreader.data
 
+/** Whitespace runs, compiled once: [Chapter.title] is read for every row of a chapter list. */
+private val whitespaceRun = Regex("\\s+")
+
 /** A single chapter file belonging to a project. */
 data class Chapter(
     val name: String,
@@ -14,7 +17,7 @@ data class Chapter(
             val base = name.substringBeforeLast('.', name)
             val cleaned = base
                 .replace('_', ' ')
-                .replace(Regex("\\s+"), " ")
+                .replace(whitespaceRun, " ")
                 .trim()
                 .ifBlank { name }
             return if (cleaned == cleaned.lowercase()) {
@@ -32,7 +35,10 @@ data class Chapter(
         get() = !remote && name.substringAfterLast('.', "").lowercase() in setOf("md", "markdown")
 }
 
-/** One novel on the shelf: an imported folder of chapters, or an online novel. */
+/** What a shelf entry holds: prose read as text, or pages read as a vertical strip. */
+enum class ProjectKind { NOVEL, COMIC }
+
+/** One title on the shelf: an imported folder of chapters, an online novel, or a comic. */
 data class Project(
     val id: String,
     val name: String,
@@ -61,8 +67,13 @@ data class Project(
     val votes: Int = 0,
     /** When [author] and the rest were last read from the site; 0 when never. */
     val summaryAt: Long = 0,
+    /** Novel text or comic pages; defaults to NOVEL so older saved libraries keep working. */
+    val kind: ProjectKind = ProjectKind.NOVEL,
+    /** Comic source id ("mangakakalot", "batcave"); null for novels. */
+    val sourceId: String? = null,
 ) {
     val isOnline: Boolean get() = onlinePath != null
+    val isComic: Boolean get() = kind == ProjectKind.COMIC
 }
 
 /** Six hours: old enough to fetch again in the background, new enough to open without a request. */
@@ -81,11 +92,6 @@ data class Progress(
     val chapterKey: String? = null,
     /** When this position was saved; the most recent one is the novel to continue. */
     val updatedAt: Long = 0,
-    /** Whether the rewrite was the tab being read; [scrollIndex]/[scrollOffset] stay the original's. */
-    val rewritten: Boolean = false,
-    /** Where the rewrite tab was left, kept apart from the original's position. */
-    val rewriteIndex: Int = 0,
-    val rewriteOffset: Int = 0,
 )
 
 /**
@@ -106,3 +112,23 @@ fun Progress.remapTo(chapters: List<Chapter>): Progress {
         )
     }
 }
+
+/**
+ * One remembered reading session — shelf or not. Reading anything from search
+ * lands here, so reopening needs only the identity: source, path, title, cover.
+ */
+data class ReadingHistory(
+    val id: String,
+    val kind: ProjectKind,
+    /** The comic source, or null for a novel. */
+    val sourceId: String? = null,
+    /** The series path on its source, for reopening from search. */
+    val onlinePath: String = "",
+    val title: String,
+    val coverUrl: String? = null,
+    val totalChapters: Int = 0,
+    val chapterIndex: Int = 0,
+    val chapterKey: String? = null,
+    val scrollIndex: Int = 0,
+    val updatedAt: Long = 0,
+)

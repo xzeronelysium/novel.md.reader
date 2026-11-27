@@ -8,9 +8,14 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 
+private val trailingDigits = Regex("(\\d+)$")
+private val lineBreakRun = Regex("\\s*\\n\\s*")
+private val unsafeFileChars = Regex("[\\\\/:*?\"<>|\\p{Cntrl}]")
+private val spaces = Regex("\\s+")
+
 /** The number a site chapter carries in its path (`.../chapter-2343`), or its position. */
 fun Chapter.number(index: Int): Int =
-    Regex("(\\d+)$").find(uri)?.value?.toIntOrNull() ?: (index + 1)
+    trailingDigits.find(uri)?.value?.toIntOrNull() ?: (index + 1)
 
 /**
  * Downloaded chapters as plain Markdown files, one folder per novel:
@@ -137,7 +142,7 @@ class Vault(private val root: File) {
 
     /** A chapter's saved Markdown: its title as a heading, then the text. */
     fun render(chapter: Chapter, blocks: List<Block>): String =
-        "# ${chapter.title.replace(Regex("\\s*\\n\\s*"), " ")}\n\n" + MarkdownWriter.write(blocks)
+        "# ${chapter.title.replace(lineBreakRun, " ")}\n\n" + MarkdownWriter.write(blocks)
 
     private fun index(project: Project): Map<String, String> = indexes.getOrPut(project.id) {
         val dir = folder(project)
@@ -169,8 +174,8 @@ class Vault(private val root: File) {
 
         internal fun safeTitle(title: String): String =
             title
-                .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "")
-                .replace(Regex("\\s+"), " ")
+                .replace(unsafeFileChars, "")
+                .replace(spaces, " ")
                 .trim()
                 .take(80)
                 .trimEnd('.', ' ')

@@ -66,6 +66,8 @@ object FreeWebNovelParser {
 
     // The site injects self-promotion into chapter text; drop those paragraphs.
     private val promo = Regex("free\\s?web\\s?novel(\\.?\\s?com)?", RegexOption.IGNORE_CASE)
+    // Every text node of a chapter is normalised; compile once, not once per node.
+    private val whitespaceRun = Regex("\\s+")
 
     fun isNovelPath(path: String) = novelPath.matches(path)
 
@@ -236,7 +238,7 @@ object FreeWebNovelParser {
         fun walk(node: Node, bold: Boolean, italic: Boolean) {
             when (node) {
                 is TextNode -> {
-                    val text = node.wholeText.replace(Regex("\\s+"), " ")
+                    val text = node.wholeText.replace(whitespaceRun, " ")
                     if (text.isNotEmpty()) spans += InlineSpan(text, bold = bold, italic = italic)
                 }
 
